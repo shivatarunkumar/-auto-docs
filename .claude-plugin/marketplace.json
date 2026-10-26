@@ -1,0 +1,15 @@
+{
+  "name": "autodocs",
+  "owner": { "name": "shivatarunkumar" },
+  "metadata": {
+    "description": "autodocs: diagrams, draw.io files, runbooks and Confluence bundles from your codebase."
+  },
+  "plugins": [
+    {
+      "name": "autodocs",
+      "source": "./",
+      "description": "Generate source-backed documentation for a codebase: HTML + draw.io architecture and flow diagrams, an implementation-level runbook, and a Confluence import bundle.",
+      "version": "0.1.0"
+    }
+  ]
+}

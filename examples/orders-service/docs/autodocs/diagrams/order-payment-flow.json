@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Order creation and asynchronous payment",
+    "output": "docs/autodocs/diagrams/order-payment-flow.html",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://localhost/orders-service.git", "link_mode": "local-only", "revision": "840bc6aee41792d3c48138621e4d11864a99ec2e" }
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "API client", "sublabel": "x-api-key" },
+    { "id": "api", "type": "backend", "label": "API server", "sublabel": "POST /orders", "sources": [{ "path": "src/server.js", "line": 23, "end_line": 33 }] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "orders", "sources": [{ "path": "src/db.js", "line": 6, "end_line": 25 }] },
+    { "id": "redis", "type": "messagebus", "label": "Redis list", "sublabel": "payment jobs", "sources": [{ "path": "src/queue.js", "line": 8, "end_line": 16 }] },
+    { "id": "worker", "type": "backend", "label": "Payment worker", "sublabel": "handle()", "sources": [{ "path": "src/worker.js", "line": 8, "end_line": 27 }] },
+    { "id": "payments", "type": "external", "label": "Payments provider", "sublabel": "/v1/charges", "sources": [{ "path": "src/payments.js", "line": 4, "end_line": 13 }] }
+  ],
+  "segments": [
+    { "from": 150, "to": 282, "label": "Accept order (synchronous)" },
+    { "from": 292, "to": 560, "label": "Charge order (worker)" }
+  ],
+  "messages": [
+    { "id": "create-order", "from": "client", "to": "api", "y": 160, "label": "POST /orders", "variant": "emphasis" },
+    { "id": "insert-order", "from": "api", "to": "postgres", "y": 188, "label": "INSERT pending", "variant": "emphasis" },
+    { "id": "order-row", "from": "postgres", "to": "api", "y": 216, "label": "order row", "variant": "return" },
+    { "id": "enqueue", "from": "api", "to": "redis", "y": 244, "label": "LPUSH job", "variant": "dashed" },
+    { "id": "accepted", "from": "api", "to": "client", "y": 272, "label": "202 + order", "variant": "return" },
+    { "id": "pop-job", "from": "worker", "to": "redis", "y": 304, "label": "BRPOP 5s", "variant": "default" },
+    { "id": "job", "from": "redis", "to": "worker", "y": 332, "label": "orderId, attempt", "variant": "return" },
+    { "id": "load-order", "from": "worker", "to": "postgres", "y": 360, "label": "SELECT order", "variant": "default", "note": "skip unless status is pending" },
+    { "id": "charge", "from": "worker", "to": "payments", "y": 404, "label": "POST /v1/charges", "variant": "emphasis", "note": "idempotency-key order-<id>" },
+    { "id": "charge-result", "from": "payments", "to": "worker", "y": 448, "label": "succeeded / declined", "variant": "return" },
+    { "id": "record-status", "from": "worker", "to": "postgres", "y": 476, "label": "UPDATE paid | failed", "variant": "default" },
+    { "id": "retry", "from": "worker", "to": "redis", "y": 504, "label": "LPUSH attempt+1", "variant": "dashed", "note": "on provider error while attempt < MAX_PAYMENT_ATTEMPTS" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 160, "to": 272, "type": "backend" },
+    { "participant": "worker", "from": 304, "to": 510, "type": "backend" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Synchronous part", "items": ["The client gets 202 with status pending", "Payment never blocks the HTTP request"] },
+    { "dot": "amber", "title": "Failure handling", "items": ["Declines set status failed with the decline code", "Provider errors retry, then fail after the last attempt"] }
+  ]
+}

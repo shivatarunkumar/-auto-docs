@@ -1,0 +1,19 @@
+autodocs
+Copyright (c) 2026 shivatarunkumar
+
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+This product includes modified software from an upstream project. Its
+copyright and attribution notices are retained below as its licenses require:
+
+  Copyright (c) 2026 tt-a1i (Archify)
+  Copyright (c) 2025 Cocoon AI
+  Originated from https://github.com/Cocoon-AI/architecture-diagram-generator
+
+Upstream code contributed under the MIT License remains available under those
+terms; the MIT copyright and permission notice is preserved in skills/autodocs/LICENSE-MIT.
+
+Third-party components retain their own licenses; see skills/autodocs/THIRD_PARTY_NOTICES.md.
+Names and logos do not imply endorsement, and the software license grants no
+trademark permission. These licenses cover the tool, not the documentation it
+generates for you.

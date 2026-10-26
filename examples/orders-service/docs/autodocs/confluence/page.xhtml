@@ -1,0 +1,139 @@
+<ac:structured-macro ac:name="toc" ac:schema-version="1"><ac:parameter ac:name="maxLevel">3</ac:parameter></ac:structured-macro>
+<h2>Overview</h2>
+<p>orders-service accepts customer orders over HTTP and charges them through an external payments provider without making the caller wait for the charge. An order is stored as <code>pending</code>, a payment job is queued in Redis, and a separate worker process charges it and records <code>paid</code> or <code>failed</code>.</p>
+<p>Key capabilities:</p>
+<ul>
+<li><code>POST /orders</code> creates an order and returns <code>202 Accepted</code> immediately (<code>src/server.js:25-33</code>).</li>
+<li><code>GET /orders/:id</code> returns the order and its current payment status (<code>src/server.js:35-39</code>).</li>
+<li>Asynchronous charging with retries on provider outages (<code>src/worker.js:8-21</code>).</li>
+<li><code>GET /healthz</code> reports database reachability (<code>src/server.js:19-22</code>).</li>
+</ul>
+<p>It does not manage customers, refunds or inventory, and it has no user-facing UI.</p>
+<h2>Architecture</h2>
+<ac:structured-macro ac:name="info" ac:schema-version="1"><ac:parameter ac:name="title">Diagram: Architecture diagram</ac:parameter><ac:rich-text-body><p><strong>Architecture diagram</strong> — editable draw.io diagram attached to this page as <ac:link><ri:attachment ri:filename="architecture.drawio" /><ac:plain-text-link-body><![CDATA[architecture.drawio]]></ac:plain-text-link-body></ac:link>.</p>
+<p>To show it here: edit the page, replace this panel with <em>Insert → draw.io Diagram</em>, then choose <em>Import</em> (or <em>File → Import from → Device</em>) and select <code>architecture.drawio</code>.</p></ac:rich-text-body></ac:structured-macro>
+<p><ac:link><ri:attachment ri:filename="architecture.html" /><ac:plain-text-link-body><![CDATA[Interactive architecture diagram]]></ac:plain-text-link-body></ac:link></p>
+<p>The service runs as two processes from one codebase, sharing PostgreSQL and Redis:</p>
+<table data-layout="default"><tbody>
+<tr><th>Component</th><th>Responsibility</th><th>Technology</th><th>Code</th></tr>
+<tr><td>API server</td><td>Authenticates requests, validates input, stores orders, enqueues payment jobs</td><td>Node.js <code>node:http</code> on port 8080</td><td><code>src/server.js:17-47</code></td></tr>
+<tr><td>Payment worker</td><td>Pops jobs, charges orders, records the outcome, retries provider errors</td><td>Node.js loop</td><td><code>src/worker.js:8-27</code></td></tr>
+<tr><td>PostgreSQL</td><td>Source of truth for orders and their status</td><td><code>pg</code> pool, max 10 connections</td><td><code>src/db.js:4</code></td></tr>
+<tr><td>Redis list <code>orders:payment-jobs</code></td><td>Payment job queue between API and worker</td><td><code>redis</code> client, <code>LPUSH</code> / <code>BRPOP</code></td><td><code>src/queue.js:4-16</code></td></tr>
+<tr><td>Payments provider</td><td>Charges the order amount</td><td>HTTPS <code>POST /v1/charges</code></td><td><code>src/payments.js:4-13</code></td></tr>
+</tbody></table>
+<p>Trust boundary: every route except <code>/healthz</code> requires the shared <code>x-api-key</code> header (<code>src/server.js:23</code>). The payments provider is external; its URL comes from <code>PAYMENTS_URL</code>.</p>
+<h2>Prerequisites</h2>
+<ul>
+<li>Node.js 20 or newer (<code>package.json</code> <code>engines</code>, <code>Dockerfile</code> uses <code>node:20-alpine</code>).</li>
+<li>PostgreSQL 16 and Redis 7 (versions used by <code>docker-compose.yml</code>), or Docker with Compose to run them locally.</li>
+<li><code>psql</code> on your PATH for the migration script.</li>
+<li>A payments provider endpoint (or sandbox) reachable at <code>PAYMENTS_URL</code>.</li>
+</ul>
+<h2>Installation and setup</h2>
+<ol>
+<li>Install dependencies:
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[npm ci]]></ac:plain-text-body></ac:structured-macro></li>
+</ol>
+<ol>
+<li>Start PostgreSQL and Redis (or point the variables below at existing instances):
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[docker compose up -d postgres redis]]></ac:plain-text-body></ac:structured-macro></li>
+</ol>
+<ol>
+<li>Export configuration (see <a href="#configuration">Configuration</a>):
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[export DATABASE_URL=postgres://postgres:orders@localhost:5432/orders
+export REDIS_URL=redis://localhost:6379
+export API_KEY=dev-key
+export PAYMENTS_URL=http://localhost:9000]]></ac:plain-text-body></ac:structured-macro></li>
+</ol>
+<ol>
+<li>Create the schema:
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[npm run migrate]]></ac:plain-text-body></ac:structured-macro></li>
+</ol>
+<ol>
+<li>Start the API and the worker in two terminals:
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[npm start          # prints: orders-service listening on :8080
+npm run worker     # prints: payment worker started]]></ac:plain-text-body></ac:structured-macro></li>
+</ol>
+<p>Alternatively run everything with <code>docker compose up --build</code>; the compose file starts <code>api</code> and <code>worker</code> with development settings.</p>
+<h2>Configuration</h2>
+<p>All configuration is read from environment variables once at startup (<code>src/config.js:8-15</code>). Missing required variables stop the process with <code>Missing required environment variable &lt;NAME&gt;</code> (<code>src/config.js:2-6</code>).</p>
+<table data-layout="default"><tbody>
+<tr><th>Variable</th><th>Required</th><th>Default</th><th>Purpose</th><th>Read at</th></tr>
+<tr><td><code>DATABASE_URL</code></td><td>yes</td><td>—</td><td>PostgreSQL connection string</td><td><code>src/config.js:10</code></td></tr>
+<tr><td><code>API_KEY</code></td><td>yes</td><td>—</td><td>Shared secret clients send as <code>x-api-key</code></td><td><code>src/config.js:12</code></td></tr>
+<tr><td><code>PAYMENTS_URL</code></td><td>yes</td><td>—</td><td>Base URL of the payments provider</td><td><code>src/config.js:13</code></td></tr>
+<tr><td><code>REDIS_URL</code></td><td>no</td><td><code>redis://localhost:6379</code></td><td>Redis used for the payment job queue</td><td><code>src/config.js:11</code></td></tr>
+<tr><td><code>PORT</code></td><td>no</td><td><code>8080</code></td><td>HTTP port of the API server</td><td><code>src/config.js:9</code></td></tr>
+<tr><td><code>MAX_PAYMENT_ATTEMPTS</code></td><td>no</td><td><code>3</code></td><td>Charge attempts before an order is marked failed on provider errors</td><td><code>src/config.js:14</code></td></tr>
+</tbody></table>
+<ac:structured-macro ac:name="warning" ac:schema-version="1"><ac:parameter ac:name="title">Warning</ac:parameter><ac:rich-text-body><p><code>API_KEY</code> is a single shared secret compared in plain text. Rotate it by restarting both processes with the new value; there is no key list.</p></ac:rich-text-body></ac:structured-macro>
+<h2>Usage</h2>
+<p>Create an order (amount in cents, currency defaults to <code>USD</code>):</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[curl -s -X POST localhost:8080/orders \
+  -H 'x-api-key: dev-key' -H 'content-type: application/json' \
+  -d '{"customerId":"c-42","amountCents":1999}']]></ac:plain-text-body></ac:structured-macro>
+<p>The response is <code>202</code> with the stored row, <code>status: &quot;pending&quot;</code>. Poll the order until the worker has charged it:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">bash</ac:parameter><ac:parameter ac:name="linenumbers">false</ac:parameter><ac:plain-text-body><![CDATA[curl -s localhost:8080/orders/1 -H 'x-api-key: dev-key']]></ac:plain-text-body></ac:structured-macro>
+<p><code>status</code> becomes <code>paid</code>, or <code>failed</code> with <code>failure_reason</code> set to the provider's decline code or the last provider error.</p>
+<table data-layout="default"><tbody>
+<tr><th>Response</th><th>Meaning</th></tr>
+<tr><td><code>400</code></td><td><code>customerId</code> missing or <code>amountCents</code> not a positive integer (<code>src/server.js:27-29</code>)</td></tr>
+<tr><td><code>401</code></td><td>Missing or wrong <code>x-api-key</code> (<code>src/server.js:23</code>)</td></tr>
+<tr><td><code>404</code></td><td>Unknown order or route (<code>src/server.js:38-40</code>)</td></tr>
+<tr><td><code>500</code></td><td>Unexpected error; details are logged to stderr (<code>src/server.js:41-44</code>)</td></tr>
+</tbody></table>
+<h2>How it works</h2>
+<h3>Order creation</h3>
+<ac:structured-macro ac:name="info" ac:schema-version="1"><ac:parameter ac:name="title">Diagram: Order creation and payment sequence</ac:parameter><ac:rich-text-body><p><strong>Order creation and payment sequence</strong> — editable draw.io diagram attached to this page as <ac:link><ri:attachment ri:filename="order-payment-flow.drawio" /><ac:plain-text-link-body><![CDATA[order-payment-flow.drawio]]></ac:plain-text-link-body></ac:link>.</p>
+<p>To show it here: edit the page, replace this panel with <em>Insert → draw.io Diagram</em>, then choose <em>Import</em> (or <em>File → Import from → Device</em>) and select <code>order-payment-flow.drawio</code>.</p></ac:rich-text-body></ac:structured-macro>
+<p><ac:link><ri:attachment ri:filename="order-payment-flow.html" /><ac:plain-text-link-body><![CDATA[Interactive sequence diagram]]></ac:plain-text-link-body></ac:link></p>
+<ol>
+<li>The API checks <code>x-api-key</code> before routing; only <code>/healthz</code> is exempt (<code>src/server.js:19-23</code>).</li>
+<li><code>POST /orders</code> parses JSON and validates <code>customerId</code> and <code>amountCents</code> (<code>src/server.js:25-29</code>).</li>
+<li><code>insertOrder</code> writes a row with <code>status = 'pending'</code> and returns it (<code>src/db.js:6-13</code>).</li>
+<li><code>enqueuePayment</code> pushes <code>{ orderId, attempt: 1 }</code> onto the Redis list <code>orders:payment-jobs</code> (<code>src/queue.js:8-10</code>).</li>
+<li>The API responds <code>202</code> with the pending order (<code>src/server.js:32</code>).</li>
+</ol>
+<p>The order is committed before the job is queued. If Redis is unavailable at that moment the client gets <code>500</code> while a <code>pending</code> order remains without a job; see <a href="#troubleshooting">Troubleshooting</a>.</p>
+<h3>Payment processing</h3>
+<ol>
+<li>The worker blocks on <code>BRPOP</code> for up to 5 seconds per poll (<code>src/queue.js:13-16</code>, <code>src/worker.js:24-27</code>).</li>
+<li>It reloads the order and skips it unless it is still <code>pending</code>, which makes duplicate jobs harmless (<code>src/worker.js:9-10</code>).</li>
+<li><code>charge</code> calls <code>POST {PAYMENTS_URL}/v1/charges</code> with an <code>idempotency-key</code> of <code>order-&lt;id&gt;</code>, so a retried charge is not billed twice by a provider that honours the key (<code>src/payments.js:4-9</code>).</li>
+<li>A <code>succeeded</code> response sets <code>paid</code>; any other response sets <code>failed</code> with the decline code (<code>src/payments.js:11-12</code>, <code>src/worker.js:12-13</code>).</li>
+<li>A provider <code>5xx</code> or network error throws. The job is re-queued with <code>attempt + 1</code> until <code>MAX_PAYMENT_ATTEMPTS</code>, then the order is marked <code>failed</code> with the error message (<code>src/worker.js:14-19</code>). Retries are immediate; there is no backoff.</li>
+</ol>
+<h3>Data model</h3>
+<p>One table, <code>orders</code> (<code>migrations/001_orders.sql:1-10</code>): <code>id</code> (bigserial), <code>customer_id</code>, <code>amount_cents</code> (positive), <code>currency</code> (3 letters, default <code>USD</code>), <code>status</code> (<code>pending</code>, <code>paid</code>, <code>failed</code>), <code>failure_reason</code>, <code>created_at</code>, <code>updated_at</code>. <code>orders_customer_idx</code> indexes <code>customer_id</code> (<code>migrations/001_orders.sql:11</code>).</p>
+<h2>Deployment and operations</h2>
+<ul>
+<li><strong>Build:</strong> the <code>Dockerfile</code> installs production dependencies and runs <code>node src/server.js</code> on port 8080 (<code>Dockerfile:1-8</code>). Run the worker from the same image with <code>node src/worker.js</code>, as <code>docker-compose.yml</code> does.</li>
+<li><strong>Health check:</strong> <code>GET /healthz</code> runs <code>SELECT 1</code>; it fails with <code>500</code> when PostgreSQL is unreachable (<code>src/server.js:19-22</code>, <code>src/db.js:27-29</code>). It does not check Redis or the worker.</li>
+<li><strong>Scaling:</strong> API instances are stateless. Several workers can share the queue because <code>BRPOP</code> hands each job to one worker and the <code>pending</code> check skips orders already handled.</li>
+<li><strong>Logs:</strong> both processes log to stdout/stderr; unexpected API errors are printed with <code>console.error</code> (<code>src/server.js:42</code>).</li>
+<li><strong>Deploy target:</strong> the repository contains no production deployment manifests; <code>docker-compose.yml</code> is for local development only.</li>
+</ul>
+<h2>Troubleshooting</h2>
+<table data-layout="default"><tbody>
+<tr><th>Symptom</th><th>Likely cause</th><th>How to confirm</th><th>Fix</th></tr>
+<tr><td>Process exits with <code>Missing required environment variable</code></td><td><code>DATABASE_URL</code>, <code>API_KEY</code> or <code>PAYMENTS_URL</code> unset</td><td>Error names the variable</td><td>Export it and restart</td></tr>
+<tr><td>All requests return <code>401</code></td><td>Client key differs from <code>API_KEY</code></td><td>Compare the <code>x-api-key</code> header with the server environment</td><td>Send the configured key</td></tr>
+<tr><td>Orders stay <code>pending</code></td><td>Worker not running, or it cannot reach Redis</td><td>No <code>payment worker started</code> log; <code>LLEN orders:payment-jobs</code> keeps growing</td><td>Start <code>npm run worker</code>; check <code>REDIS_URL</code></td></tr>
+<tr><td><code>pending</code> order with no queued job</td><td>Redis failed after the insert (<code>src/server.js:30-31</code>)</td><td><code>LRANGE orders:payment-jobs 0 -1</code> lacks the id</td><td>Re-queue: <code>LPUSH orders:payment-jobs '{&quot;orderId&quot;:&lt;id&gt;,&quot;attempt&quot;:1}'</code></td></tr>
+<tr><td>Many orders <code>failed</code> with <code>payment error after N attempts</code></td><td>Payments provider outage</td><td><code>failure_reason</code> text; provider status page</td><td>After recovery, set affected orders back to <code>pending</code> and re-queue them</td></tr>
+<tr><td><code>/healthz</code> returns <code>500</code></td><td>PostgreSQL unreachable</td><td>API logs show the connection error</td><td>Check <code>DATABASE_URL</code> and database availability</td></tr>
+</tbody></table>
+<h2>Source map</h2>
+<table data-layout="default"><tbody>
+<tr><th>Path</th><th>Responsibility</th></tr>
+<tr><td><code>src/server.js</code></td><td>HTTP routes, API-key check, validation</td></tr>
+<tr><td><code>src/worker.js</code></td><td>Payment job loop and retry policy</td></tr>
+<tr><td><code>src/payments.js</code></td><td>Payments provider client</td></tr>
+<tr><td><code>src/db.js</code></td><td>PostgreSQL queries</td></tr>
+<tr><td><code>src/queue.js</code></td><td>Redis job queue</td></tr>
+<tr><td><code>src/config.js</code></td><td>Environment configuration</td></tr>
+<tr><td><code>migrations/001_orders.sql</code></td><td>Database schema</td></tr>
+<tr><td><code>Dockerfile</code>, <code>docker-compose.yml</code></td><td>Container image and local stack</td></tr>
+</tbody></table>
+<p>To add an endpoint, extend the router in <code>src/server.js:17-45</code>. To change retry behaviour, edit <code>src/worker.js:14-19</code> and <code>MAX_PAYMENT_ATTEMPTS</code>.</p>

@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: orders
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+  api:
+    build: .
+    command: node src/server.js
+    environment: &env
+      DATABASE_URL: postgres://postgres:orders@postgres:5432/orders
+      REDIS_URL: redis://redis:6379
+      API_KEY: dev-key
+      PAYMENTS_URL: http://payments-sandbox:9000
+    ports: ["8080:8080"]
+    depends_on: [postgres, redis]
+  worker:
+    build: .
+    command: node src/worker.js
+    environment: *env
+    depends_on: [postgres, redis]

@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "orders-service runtime architecture",
+    "output": "docs/autodocs/diagrams/architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://localhost/orders-service.git",
+      "link_mode": "local-only",
+      "revision": "840bc6aee41792d3c48138621e4d11864a99ec2e"
+    }
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "API client",
+      "sublabel": "sends x-api-key",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API server",
+      "sublabel": "node:http :8080",
+      "pos": [
+        300,
+        40
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server.js",
+          "line": 17,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "orders table",
+      "pos": [
+        570,
+        40
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/db.js",
+          "line": 4,
+          "end_line": 25
+        },
+        {
+          "path": "migrations/001_orders.sql",
+          "line": 1,
+          "end_line": 10
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis list",
+      "sublabel": "orders:payment-jobs",
+      "pos": [
+        300,
+        210
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/queue.js",
+          "line": 4,
+          "end_line": 16
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Payment worker",
+      "sublabel": "src/worker.js",
+      "pos": [
+        570,
+        210
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/worker.js",
+          "line": 8,
+          "end_line": 27
+        }
+      ]
+    },
+    {
+      "id": "payments",
+      "type": "external",
+      "label": "Payments provider",
+      "sublabel": "PAYMENTS_URL",
+      "pos": [
+        840,
+        210
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/payments.js",
+          "line": 4,
+          "end_line": 13
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-api",
+      "from": "client",
+      "to": "api",
+      "label": "HTTP + API key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-db",
+      "from": "api",
+      "to": "postgres",
+      "label": "INSERT / SELECT",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-queue",
+      "from": "api",
+      "to": "redis",
+      "label": "LPUSH job",
+      "variant": "dashed"
+    },
+    {
+      "id": "queue-worker",
+      "from": "redis",
+      "to": "worker",
+      "label": "BRPOP job",
+      "variant": "dashed"
+    },
+    {
+      "id": "worker-db",
+      "from": "worker",
+      "to": "postgres",
+      "label": "UPDATE status"
+    },
+    {
+      "id": "worker-payments",
+      "from": "worker",
+      "to": "payments",
+      "label": "POST /v1/charges"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Request path",
+      "items": [
+        "POST /orders stores a pending order and returns 202",
+        "GET /orders/:id reads the current status",
+        "/healthz checks PostgreSQL, no API key"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Payment retries",
+      "items": [
+        "Provider 5xx or network errors re-enqueue the job",
+        "After MAX_PAYMENT_ATTEMPTS (default 3) the order is failed"
+      ]
+    }
+  ]
+}

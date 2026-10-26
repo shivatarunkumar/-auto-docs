@@ -1,0 +1,13 @@
+{
+  "name": "autodocs-repository",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "autodocs: source-backed diagrams, draw.io files, runbooks and Confluence bundles for any codebase.",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "doctor": "node skills/autodocs/bin/autodocs.mjs doctor"
+  }
+}

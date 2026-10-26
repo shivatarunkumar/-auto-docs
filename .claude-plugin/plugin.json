@@ -1,0 +1,10 @@
+{
+  "name": "autodocs",
+  "version": "0.1.0",
+  "description": "Generate source-backed documentation for a codebase: HTML + draw.io architecture and flow diagrams, an implementation-level runbook, and a Confluence import bundle.",
+  "author": { "name": "shivatarunkumar" },
+  "homepage": "https://github.com/shivatarunkumar/-auto-docs",
+  "repository": "https://github.com/shivatarunkumar/-auto-docs",
+  "license": "Apache-2.0",
+  "keywords": ["documentation", "architecture", "diagrams", "drawio", "runbook", "confluence"]
+}
