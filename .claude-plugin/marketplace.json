@@ -9,7 +9,7 @@
       "name": "autodocs",
       "source": "./",
       "description": "Generate source-backed documentation for a codebase: HTML + draw.io architecture and flow diagrams, an implementation-level runbook, and a Confluence import bundle.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

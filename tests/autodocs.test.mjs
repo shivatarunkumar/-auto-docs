@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { extractDiagram, htmlToDrawio, pathPoints } from '../skills/autodocs/drawio/export-drawio.mjs';
-import { markdownToConfluence } from '../skills/autodocs/docs/confluence.mjs';
+import { markdownToConfluence, storageToHtml } from '../skills/autodocs/docs/confluence.mjs';
 import { checkRunbook } from '../skills/autodocs/docs/runbook-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,16 +96,48 @@ test('runbook check reports placeholders, bad citations, missing sections and li
   assert.ok(report.errors.some((error) => /outside the file \(1-27\)/.test(error.message)));
 });
 
-test('bundle writes a Confluence folder with page, guide and attachments', () => {
+test('bundle writes a Confluence folder and moves check results out of diagrams/', () => {
   const work = tempDir();
   fs.cpSync(sample, work, { recursive: true });
-  fs.rmSync(path.join(work, 'docs/autodocs/confluence'), { recursive: true, force: true });
+  const docsDir = path.join(work, 'docs/autodocs');
+  fs.rmSync(path.join(docsDir, 'confluence'), { recursive: true, force: true });
+  // Simulate engine leftovers beside the HTML.
+  fs.writeFileSync(path.join(docsDir, 'diagrams/architecture.delivery.json'), '{}');
+  fs.writeFileSync(path.join(docsDir, 'diagrams/architecture.finalize-summary.json'), '{}');
+  fs.mkdirSync(path.join(docsDir, 'diagrams/review-2'));
+  fs.writeFileSync(path.join(docsDir, 'diagrams/review-2/architecture.browser-check.json'), '{}');
+
   const run = spawnSync(process.execPath, [cli, 'bundle', 'docs/autodocs', '--repo-root', '.', '--json'], { cwd: work, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stdout + run.stderr);
   const result = JSON.parse(run.stdout);
   assert.equal(result.diagrams.length, 2);
+  assert.equal(result.checksMoved, 3);
   assert.deepEqual(result.confluence.attachments, ['architecture.drawio', 'architecture.html', 'order-payment-flow.drawio', 'order-payment-flow.html']);
-  for (const file of ['page.xhtml', 'page.md', 'IMPORT.md']) assert.ok(fs.existsSync(path.join(work, 'docs/autodocs/confluence', file)), file);
+  for (const file of ['page.html', 'page.xhtml', 'page.md', 'IMPORT.md']) assert.ok(fs.existsSync(path.join(docsDir, 'confluence', file)), file);
+
+  assert.deepEqual(fs.readdirSync(path.join(docsDir, 'diagrams')).sort(), [
+    'README.md', 'architecture.drawio', 'architecture.html', 'architecture.json',
+    'order-payment-flow.drawio', 'order-payment-flow.html', 'order-payment-flow.json',
+  ]);
+  assert.ok(fs.existsSync(path.join(docsDir, '.checks/architecture/architecture.delivery.json')));
+  assert.ok(fs.existsSync(path.join(docsDir, '.checks/diagrams/review-2/architecture.browser-check.json')));
+  assert.match(read(path.join(docsDir, '.gitignore')), /^\.checks\/$/m);
+  assert.match(read(path.join(docsDir, 'confluence/IMPORT.md')), /A\. Copy and paste \(recommended\)/);
+});
+
+test('storage format renders as a copy-pasteable HTML page', () => {
+  const { xhtml } = markdownToConfluence([
+    '# Demo', '', '## Setup', '', '```sh', 'echo "a]]>b"', '```', '',
+    '> [!WARNING]', '> Careful.', '', '[Architecture](diagrams/architecture.drawio)',
+  ].join('\n'));
+  const html = storageToHtml(xhtml, { title: 'Demo runbook' });
+  assert.match(html, /^<!doctype html>/);
+  assert.doesNotMatch(html, /<ac:|<ri:|CDATA/);
+  assert.match(html, /<nav class="toc"><ul><li class="toc-2"><a href="#setup">Setup<\/a><\/li><\/ul><\/nav>/);
+  assert.match(html, /<h2 id="setup">Setup<\/h2>/);
+  assert.match(html, /<pre><code class="language-bash">echo &quot;a]]&gt;b&quot;<\/code><\/pre>/);
+  assert.match(html, /class="panel panel-warning".*Careful\./s);
+  assert.match(html, /<a href="attachments\/architecture.drawio">architecture.drawio<\/a>/);
 });
 
 test('installer copies the skill into a project for Copilot and Claude, and removes it', () => {

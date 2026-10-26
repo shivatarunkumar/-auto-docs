@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDiagram, htmlToDrawio } from '../drawio/export-drawio.mjs';
-import { markdownToConfluence } from '../docs/confluence.mjs';
+import { markdownToConfluence, storageToHtml } from '../docs/confluence.mjs';
 import { checkRunbook } from '../docs/runbook-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,53 +109,118 @@ function confluenceCommand(args) {
 
 const IMPORT_GUIDE = (title, attachments) => `# Importing "${title}" into Confluence
 
-This folder is self-contained. Create one Confluence page for the runbook, then
-attach the files under \`attachments/\` to that page.
+Three steps: create the page, attach the files, place the diagrams. No API,
+tokens or extra tools are needed; the API route at the end is optional.
+
+| File | Use it for |
+|---|---|
+| \`page.html\` | Open in a browser and copy-paste into Confluence (easiest) |
+| \`page.md\` | Paste as Markdown |
+| \`page.xhtml\` | Confluence storage format, for a source editor app or the REST API |
+| \`attachments/\` | Files to attach to the page: draw.io diagrams and interactive HTML diagrams |
 
 ## 1. Create the page
 
-Pick one of these:
+Create a new Confluence page titled **${title}**, then fill it with one of these:
 
-- **Storage format (keeps code blocks, panels and the table of contents).**
-  Use the REST API or a source editor app with \`page.xhtml\`:
+**A. Copy and paste (recommended).** Open \`page.html\` in your browser, press
+Cmd+A / Ctrl+A, copy, and paste into the empty page body. Headings, tables,
+lists, links and code blocks keep their formatting; coloured callouts arrive as
+plain text, which you can turn back into panels with \`/info\` or \`/warning\`.
 
-  \`\`\`bash
-  curl -u "$CONFLUENCE_USER:$CONFLUENCE_API_TOKEN" -H 'Content-Type: application/json' \\
-    -X POST "$CONFLUENCE_BASE_URL/wiki/rest/api/content" \\
-    -d "$(jq -n --arg t '${title.replace(/'/g, '')}' --arg s "$CONFLUENCE_SPACE" --rawfile b page.xhtml \\
-      '{type:"page",title:$t,space:{key:$s},body:{storage:{value:$b,representation:"storage"}}}')"
-  \`\`\`
+**B. Paste Markdown.** Copy the contents of \`page.md\`. On Confluence Data
+Center/Server, use *Insert → Markup → Markdown* and paste it. On Confluence
+Cloud, paste it straight into the editor; it usually converts headings, lists,
+tables and code as you paste. If it stays plain text, use option A.
 
-- **Markdown.** In the Confluence editor, choose *Insert → Markup → Markdown* and
-  paste \`page.md\`.
+**C. Storage format (exact panels, code macros and table of contents).** If
+your site has a source editor app (for example *Confluence Source Editor*),
+open it on the page and paste \`page.xhtml\`.
 
 ## 2. Attach the files
 
-Upload every file in \`attachments/\` to the page (*••• → Attachments → Upload*),
-or with the REST API:
+Edit the page and drag every file from \`attachments/\` onto it, or use
+*••• → Attachments → Upload files*. Links in the page to these files start
+working once they are attached.
+
+## 3. Place the draw.io diagrams
+
+Each "Diagram" panel names a \`.drawio\` file. Edit the page, click the panel,
+choose *Insert → draw.io Diagram* (or type \`/draw.io\`), then *Import* (or
+*File → Import from → Device* inside the draw.io editor) and select the file
+from \`attachments/\`. Delete the panel afterwards. The diagram stays editable in
+Confluence. This needs the *draw.io Diagrams for Confluence* app on your site;
+without it, attach a PNG exported from the interactive \`.html\` diagram instead.
+
+Readers can download the attached \`.html\` diagrams and open them in a browser
+for focus, path tracing and image export.
+
+## Optional: automate with the REST API
+
+For scripted or CI publishing, create the page from \`page.xhtml\` and upload
+the attachments:
 
 \`\`\`bash
+curl -u "$CONFLUENCE_USER:$CONFLUENCE_API_TOKEN" -H 'Content-Type: application/json' \\
+  -X POST "$CONFLUENCE_BASE_URL/wiki/rest/api/content" \\
+  -d "$(jq -n --arg t '${title.replace(/'/g, '')}' --arg s "$CONFLUENCE_SPACE" --rawfile b page.xhtml \\
+    '{type:"page",title:$t,space:{key:$s},body:{storage:{value:$b,representation:"storage"}}}')"
+
 for f in attachments/*; do
   curl -u "$CONFLUENCE_USER:$CONFLUENCE_API_TOKEN" -H 'X-Atlassian-Token: no-check' \\
     -X POST "$CONFLUENCE_BASE_URL/wiki/rest/api/content/$PAGE_ID/child/attachment" -F "file=@$f"
 done
 \`\`\`
 
-## 3. Place the draw.io diagrams
-
-Each blue "Diagram" panel on the page names a \`.drawio\` file. Edit the page,
-put the cursor on the panel, choose *Insert → draw.io Diagram → Import* (or
-*File → Import from → Device* inside the draw.io editor), and select the file
-from \`attachments/\`. The diagram stays editable in Confluence. This needs the
-"draw.io Diagrams for Confluence" app on your site.
-
-Interactive \`.html\` diagrams are attached too; viewers download and open them
-in a browser for focus, path tracing and image export.
-
 ## Files
 
 ${attachments.map((file) => `- \`attachments/${file}\``).join('\n') || '- (none)'}
 `;
+
+const DIAGRAMS_README = `# Diagrams
+
+Each diagram has three files with the same name:
+
+| File | What it is |
+|---|---|
+| \`<name>.json\` | The diagram's source. Edit this (or ask the agent to) and re-run \`/autodocs\` to regenerate the other two. Keep it in git. |
+| \`<name>.html\` | Interactive diagram. Open in a browser: click components, trace paths, export PNG/SVG. |
+| \`<name>.drawio\` | Editable draw.io file for Confluence or diagrams.net. |
+
+Check results from generation are kept in \`../.checks/\`, which git ignores.
+`;
+
+// Engine check receipts are evidence for the agent, not documentation.
+const CHECK_RECEIPT = /\.(delivery|finalize|finalize-summary|browser-check|visual-check)\.json$/;
+
+function tidyChecks(docsDir) {
+  const checksDir = path.join(docsDir, '.checks');
+  let moved = 0;
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.') || entry.name === 'confluence') continue;
+        if (/^(review|visual-check)/.test(entry.name)) {
+          const target = path.join(checksDir, path.relative(docsDir, full));
+          fs.rmSync(target, { recursive: true, force: true });
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.renameSync(full, target);
+          moved += 1;
+        } else visit(full);
+      } else if (CHECK_RECEIPT.test(entry.name)) {
+        const stem = entry.name.replace(CHECK_RECEIPT, '');
+        const target = path.join(checksDir, stem, entry.name);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.renameSync(full, target);
+        moved += 1;
+      }
+    }
+  };
+  visit(docsDir);
+  writeFile(path.join(docsDir, '.gitignore'), '# Generation check results (autodocs)\n.checks/\n');
+  return moved;
+}
 
 function bundleCommand(args) {
   const options = parseOptions(args, { 'repo-root': 'string', json: 'boolean' });
@@ -185,6 +250,10 @@ function bundleCommand(args) {
     writeFile(out, htmlToDrawio(html, { title: titleFor(file) }));
     result.diagrams.push({ html: path.relative(docsDir, file), drawio: path.relative(docsDir, out) });
   }
+  for (const dir of new Set(result.diagrams.map((diagram) => path.dirname(path.join(docsDir, diagram.html))))) {
+    if (dir !== docsDir) writeFile(path.join(dir, 'README.md'), DIAGRAMS_README);
+  }
+  result.checksMoved = tidyChecks(docsDir);
 
   // 2. Check and convert the runbook.
   const runbookPath = path.join(docsDir, 'runbook.md');
@@ -216,6 +285,7 @@ function bundleCommand(args) {
     page.attachments.forEach(attach);
     result.diagrams.forEach((diagram) => { attach(diagram.drawio); attach(diagram.html); });
     writeFile(path.join(confluenceDir, 'page.xhtml'), page.xhtml);
+    writeFile(path.join(confluenceDir, 'page.html'), storageToHtml(page.xhtml, { title: page.title || 'Runbook' }));
     writeFile(path.join(confluenceDir, 'page.md'), markdown.replace(/^---\n[\s\S]*?\n---\n/, ''));
     const attachments = [...flatNames.keys()].sort();
     writeFile(path.join(confluenceDir, 'IMPORT.md'), IMPORT_GUIDE(page.title || 'Runbook', attachments));
@@ -228,7 +298,8 @@ function bundleCommand(args) {
     process.stdout.write(`${ok ? 'PASS' : 'FAIL'} bundle ${docsDir}\n`);
     for (const diagram of result.diagrams) process.stdout.write(`  drawio  ${diagram.drawio}\n`);
     if (result.runbook) printRunbookReport('runbook.md', result.runbook, false);
-    if (result.confluence) process.stdout.write(`  confluence ${result.confluence.dir}/ (page.xhtml, page.md, IMPORT.md, ${result.confluence.attachments.length} attachments)\n`);
+    if (result.confluence) process.stdout.write(`  confluence ${result.confluence.dir}/ (page.html, page.md, page.xhtml, IMPORT.md, ${result.confluence.attachments.length} attachments)\n`);
+    if (result.checksMoved) process.stdout.write(`  tidied  ${result.checksMoved} check result(s) into .checks/\n`);
     for (const warning of result.warnings) process.stdout.write(`  warning ${warning}\n`);
   }
   process.exit(ok ? 0 : 1);

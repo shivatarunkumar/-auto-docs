@@ -4,7 +4,7 @@ description: "Generate a complete, source-backed documentation set for a codebas
 argument-hint: "[repo path] [architecture | flows | runbook | all] [notes for the docs]"
 license: Apache-2.0
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # autodocs
@@ -38,19 +38,25 @@ in one monorepo and no hint which one). Otherwise proceed.
 <docs>/                       default docs/autodocs/
   runbook.md                  the runbook (Markdown, source of truth)
   diagrams/
-    architecture.json         candidate (source of the diagram)
+    README.md                 what the three files per diagram are (from `bundle`)
+    architecture.json         candidate (source of the diagram; keep it)
     architecture.html         interactive diagram
     architecture.drawio       editable draw.io file
     <flow-slug>.json|.html|.drawio
   confluence/                 written by `bundle`
+    page.html                 runbook to open in a browser and copy-paste
+    page.md                   runbook as Markdown
     page.xhtml                runbook in Confluence storage format
-    page.md                   runbook for Insert → Markup → Markdown
     attachments/              .drawio and .html files to attach
     IMPORT.md                 step-by-step import instructions
+  .checks/                    engine check results; git-ignored
+  .gitignore                  ignores .checks/
 ```
 
-The engine also writes delivery receipts (`*.delivery.json`,
-`*.finalize-summary.json`) beside each HTML; leave them there.
+Send engine check results to `<docs>/.checks/<slug>/` with `--out-dir`. The
+engine still writes `<slug>.delivery.json` beside the HTML; `bundle` moves every
+leftover receipt and review folder into `.checks/`, so never point a reader at
+them.
 
 ## Full documentation run
 
@@ -81,11 +87,13 @@ The engine also writes delivery receipts (`*.delivery.json`,
    pass `--repo-root <repo>`:
 
    ```bash
-   node <skill>/bin/autodocs.mjs finalize <type> <docs>/diagrams/<slug>.json <docs>/diagrams/<slug>.html --repo-root <repo> --quality showcase --json
+   node <skill>/bin/autodocs.mjs finalize <type> <docs>/diagrams/<slug>.json <docs>/diagrams/<slug>.html --repo-root <repo> --quality showcase --out-dir <docs>/.checks/<slug> --json
    node <skill>/bin/autodocs.mjs drawio <docs>/diagrams/<slug>.html
    ```
 
-   Repair failed gates as the engine rules describe before moving on.
+   Repair failed gates as the engine rules describe before moving on. Where
+   those rules say `--out-dir <folder>/review-<n>`, use
+   `--out-dir <docs>/.checks/<slug>/review-<n>`.
    Independent diagrams can be authored one after another without waiting for
    the runbook.
 
@@ -121,10 +129,12 @@ The engine also writes delivery receipts (`*.delivery.json`,
 ## Confluence
 
 Confluence does not read a repository folder directly. Tell the user to follow
-`<docs>/confluence/IMPORT.md`: create the page from `page.xhtml` (storage format,
-keeps code blocks, panels and the table of contents) or paste `page.md` via
-*Insert → Markup → Markdown*, attach `attachments/`, then turn each diagram
-panel into a live draw.io diagram with *Insert → draw.io Diagram → Import*.
+`<docs>/confluence/IMPORT.md`. The simplest route needs no API: open
+`page.html` in a browser, copy everything and paste it into a new page (or
+paste `page.md` as Markdown), drag the files in `attachments/` onto the page,
+then turn each diagram panel into a live draw.io diagram with
+*Insert → draw.io Diagram → Import*. `page.xhtml` is for source editor apps and
+the optional REST API route.
 Standalone conversion is also available:
 
 ```bash

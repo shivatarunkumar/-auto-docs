@@ -291,6 +291,62 @@ function cdata(text) {
   return `<![CDATA[${String(text).replace(/]]>/g, ']]]]><![CDATA[>')}]]>`;
 }
 
+// Renders storage format as a standalone HTML page that can be opened in a
+// browser and copy-pasted into the Confluence editor. Attachment references
+// resolve to `attachments/<name>` next to the page.
+export function storageToHtml(xhtml, { title = 'Runbook' } = {}) {
+  const uncdata = (text) => text.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/]]]]><!\[CDATA\[>/g, ']]>');
+  const slugs = new Map();
+  const slug = (text) => {
+    const base = text.replace(/<[^>]+>/g, '').replace(/&[a-z]+;|&#\d+;/g, '').toLowerCase().trim()
+      .replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s/g, '-') || 'section';
+    const count = slugs.get(base) ?? 0;
+    slugs.set(base, count + 1);
+    return count ? `${base}-${count}` : base;
+  };
+  const headings = [];
+  let body = xhtml
+    .replace(/<ac:structured-macro ac:name="code"[^>]*>(?:<ac:parameter ac:name="language">([^<]*)<\/ac:parameter>)?(?:<ac:parameter[^>]*>[^<]*<\/ac:parameter>)*<ac:plain-text-body>([\s\S]*?)<\/ac:plain-text-body><\/ac:structured-macro>/g,
+      (_, lang, code) => `<pre><code${lang ? ` class="language-${lang}"` : ''}>${escapeXml(uncdata(code))}</code></pre>`)
+    .replace(/<ac:structured-macro ac:name="(info|tip|note|warning)"[^>]*><ac:parameter ac:name="title">([^<]*)<\/ac:parameter><ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body><\/ac:structured-macro>/g,
+      (_, kind, panelTitle, inner) => `<div class="panel panel-${kind}"><p class="panel-title"><strong>${panelTitle}</strong></p>${inner}</div>`)
+    .replace(/<ac:link><ri:attachment ri:filename="([^"]*)" \/><ac:plain-text-link-body>([\s\S]*?)<\/ac:plain-text-link-body><\/ac:link>/g,
+      (_, file, text) => `<a href="attachments/${file}">${escapeXml(uncdata(text))}</a>`)
+    .replace(/<ac:image ac:alt="([^"]*)"><ri:attachment ri:filename="([^"]*)" \/><\/ac:image>/g, '<img alt="$1" src="attachments/$2" />')
+    .replace(/<ac:image ac:alt="([^"]*)"><ri:url ri:value="([^"]*)" \/><\/ac:image>/g, '<img alt="$1" src="$2" />')
+    .replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, text) => {
+      const id = slug(text);
+      if (level === '2' || level === '3') headings.push({ level, id, text });
+      return `<h${level} id="${id}">${text}</h${level}>`;
+    });
+  const toc = headings.length
+    ? `<nav class="toc"><ul>${headings.map((h) => `<li class="toc-${h.level}"><a href="#${h.id}">${h.text}</a></li>`).join('')}</ul></nav>`
+    : '';
+  body = body.replace(/<ac:structured-macro ac:name="toc"[\s\S]*?<\/ac:structured-macro>/g, toc);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeXml(title)}</title>
+<style>
+  body { font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #172b4d; background: #fff; max-width: 920px; margin: 32px auto; padding: 0 16px; }
+  h1, h2, h3 { line-height: 1.25; } h2 { margin-top: 2em; border-bottom: 1px solid #dfe1e6; padding-bottom: .3em; }
+  code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #f4f5f7; padding: 1px 4px; border-radius: 3px; }
+  pre { background: #f4f5f7; padding: 12px 14px; border-radius: 4px; overflow-x: auto; } pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; } th, td { border: 1px solid #dfe1e6; padding: 6px 10px; text-align: left; vertical-align: top; } th { background: #f4f5f7; }
+  .panel { border-left: 4px solid #0065ff; background: #deebff; padding: 8px 14px; margin: 1em 0; border-radius: 3px; }
+  .panel-tip { border-color: #36b37e; background: #e3fcef; } .panel-note { border-color: #ffab00; background: #fffae6; } .panel-warning { border-color: #de350b; background: #ffebe6; }
+  .panel-title { margin: 0 0 4px; } .toc ul { list-style: none; padding-left: 0; } .toc-3 { padding-left: 18px; }
+</style>
+</head>
+<body>
+<h1>${escapeXml(title)}</h1>
+${body}</body>
+</html>
+`;
+}
+
 export function escapeXml(text) {
   return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
