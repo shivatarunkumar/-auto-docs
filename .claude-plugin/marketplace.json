@@ -1,6 +1,8 @@
 {
   "name": "autodocs",
-  "owner": { "name": "shivatarunkumar" },
+  "owner": {
+    "name": "shivatarunkumar"
+  },
   "metadata": {
     "description": "autodocs: diagrams, draw.io files, runbooks and Confluence bundles from your codebase."
   },
@@ -8,8 +10,8 @@
     {
       "name": "autodocs",
       "source": "./",
-      "description": "Generate source-backed documentation for a codebase: HTML + draw.io architecture and flow diagrams, an implementation-level runbook, and a Confluence import bundle.",
-      "version": "0.2.0"
+      "description": "Generate source-backed docs for a codebase: /autodocs (full set), /autodocs-runbook, /autodocs-confluence (draw.io + copy-paste page) and /autodocs-readme (managed README block with PNG diagram).",
+      "version": "0.3.0"
     }
   ]
 }

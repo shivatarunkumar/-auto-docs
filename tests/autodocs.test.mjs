@@ -7,7 +7,9 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { extractDiagram, htmlToDrawio, pathPoints } from '../skills/autodocs/drawio/export-drawio.mjs';
 import { markdownToConfluence, storageToHtml } from '../skills/autodocs/docs/confluence.mjs';
-import { checkRunbook } from '../skills/autodocs/docs/runbook-check.mjs';
+import { applyReadmeBlock, checkReadme, checkRunbook } from '../skills/autodocs/docs/runbook-check.mjs';
+import { findChrome } from '../skills/autodocs/bin/visual-check.mjs';
+import { exportPng } from '../skills/autodocs/docs/png-export.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sample = path.join(root, 'examples/orders-service');
@@ -107,7 +109,7 @@ test('bundle writes a Confluence folder and moves check results out of diagrams/
   fs.mkdirSync(path.join(docsDir, 'diagrams/review-2'));
   fs.writeFileSync(path.join(docsDir, 'diagrams/review-2/architecture.browser-check.json'), '{}');
 
-  const run = spawnSync(process.execPath, [cli, 'bundle', 'docs/autodocs', '--repo-root', '.', '--json'], { cwd: work, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [cli, 'bundle', 'docs/autodocs', '--repo-root', '.', '--no-png', '--json'], { cwd: work, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stdout + run.stderr);
   const result = JSON.parse(run.stdout);
   assert.equal(result.diagrams.length, 2);
@@ -116,8 +118,8 @@ test('bundle writes a Confluence folder and moves check results out of diagrams/
   for (const file of ['page.html', 'page.xhtml', 'page.md', 'IMPORT.md']) assert.ok(fs.existsSync(path.join(docsDir, 'confluence', file)), file);
 
   assert.deepEqual(fs.readdirSync(path.join(docsDir, 'diagrams')).sort(), [
-    'README.md', 'architecture.drawio', 'architecture.html', 'architecture.json',
-    'order-payment-flow.drawio', 'order-payment-flow.html', 'order-payment-flow.json',
+    'README.md', 'architecture.drawio', 'architecture.html', 'architecture.json', 'architecture.png',
+    'order-payment-flow.drawio', 'order-payment-flow.html', 'order-payment-flow.json', 'order-payment-flow.png',
   ]);
   assert.ok(fs.existsSync(path.join(docsDir, '.checks/architecture/architecture.delivery.json')));
   assert.ok(fs.existsSync(path.join(docsDir, '.checks/diagrams/review-2/architecture.browser-check.json')));
@@ -140,22 +142,69 @@ test('storage format renders as a copy-pasteable HTML page', () => {
   assert.match(html, /<a href="attachments\/architecture.drawio">architecture.drawio<\/a>/);
 });
 
-test('installer copies the skill into a project for Copilot and Claude, and removes it', () => {
+test('installer copies all four skills into a project for Copilot and Claude, and removes them', () => {
   const project = tempDir();
   const install = (...args) => spawnSync(process.execPath, [path.join(root, 'install.mjs'), ...args, '--project', project], { encoding: 'utf8' });
   assert.equal(install('--agent', 'copilot').status, 0);
   assert.equal(install('--agent', 'claude').status, 0);
-  assert.ok(fs.existsSync(path.join(project, '.github/skills/autodocs/SKILL.md')));
+  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-readme', 'autodocs-runbook']) {
+    assert.ok(fs.existsSync(path.join(project, '.github/skills', skill, 'SKILL.md')), skill);
+    assert.ok(fs.existsSync(path.join(project, '.claude/skills', skill, 'SKILL.md')), skill);
+  }
   assert.ok(fs.existsSync(path.join(project, '.claude/skills/autodocs/bin/autodocs.mjs')));
   assert.match(install('--agent', 'copilot').stdout, /exists/);
   assert.equal(install('--agent', 'copilot', '--uninstall').status, 0);
-  assert.ok(!fs.existsSync(path.join(project, '.github/skills/autodocs')));
+  assert.deepEqual(fs.readdirSync(path.join(project, '.github/skills')), []);
 });
 
-test('SKILL.md front matter is valid for Copilot and Claude skill loaders', () => {
-  const skill = read(path.join(root, 'skills/autodocs/SKILL.md'));
-  const front = /^---\n([\s\S]*?)\n---\n/.exec(skill)[1];
-  assert.match(front, /^name: autodocs$/m);
-  const description = /^description: "(.*)"$/m.exec(front)[1];
-  assert.ok(description.length <= 1024, `description is ${description.length} chars`);
+test('every SKILL.md has front matter Copilot and Claude can load', () => {
+  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-readme', 'autodocs-runbook']) {
+    const text = read(path.join(root, 'skills', skill, 'SKILL.md'));
+    const front = /^---\n([\s\S]*?)\n---\n/.exec(text)[1];
+    assert.match(front, new RegExp(`^name: ${skill}$`, 'm'));
+    const description = /^description: "(.*)"$/m.exec(front)[1];
+    assert.ok(description.length <= 1024, `${skill} description is ${description.length} chars`);
+    for (const match of text.matchAll(/<engine>\/([\w./-]+\.(?:md|mjs))/g)) {
+      assert.ok(fs.existsSync(path.join(root, 'skills/autodocs', match[1])), `${skill} references ${match[1]}`);
+    }
+  }
+});
+
+test('runbook check --text-only drops the diagram requirement', () => {
+  const runbookPath = path.join(docs, 'runbook.md');
+  const textOnly = read(runbookPath).replace(/\[[^\]]*\]\(diagrams\/[^)]+\)/g, 'see below');
+  assert.ok(checkRunbook(textOnly, { runbookPath, repoRoot: sample }).errors.some((error) => error.rule === 'drawio-link'));
+  assert.deepEqual(checkRunbook(textOnly, { runbookPath, repoRoot: sample, requireDiagram: false }).errors, []);
+});
+
+test('readme block is added once, replaced in place, and leaves owner text untouched', () => {
+  const owner = '# Orders\n\n[![CI](badge.svg)](ci)\nShort intro.\n\n## Contributing\n\nPRs welcome.\n\n\n\nKeep   spacing.\n';
+  const first = applyReadmeBlock(owner, '## Overview\n\nv1');
+  assert.ok(first.startsWith('# Orders\n\n[![CI](badge.svg)](ci)\nShort intro.\n\n<!-- autodocs:start -->\n## Overview\n\nv1\n<!-- autodocs:end -->\n\n## Contributing'));
+  assert.ok(first.endsWith('PRs welcome.\n\n\n\nKeep   spacing.\n'));
+  const second = applyReadmeBlock(first, '## Overview\n\nv2');
+  assert.equal(second, first.replace('v1', 'v2'));
+  assert.equal(applyReadmeBlock(null, '## Overview', { title: 'New' }), '# New\n\n<!-- autodocs:start -->\n## Overview\n<!-- autodocs:end -->\n');
+});
+
+test('readme check validates the managed block only', () => {
+  const readmePath = path.join(sample, 'README.md');
+  const report = checkReadme(read(readmePath), { readmePath, repoRoot: sample });
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.stats.requiredSectionsFound, report.stats.requiredSections);
+  const broken = read(readmePath).replace('## Configuration', '## Settings TBD').replace('architecture.png', 'missing.png');
+  const rules = checkReadme(broken, { readmePath, repoRoot: sample }).errors.map((error) => error.rule);
+  assert.ok(rules.includes('placeholder') && rules.includes('broken-link'), rules.join());
+  assert.equal(checkReadme('# Plain readme\n', {}).errors[0].rule, 'managed-block');
+});
+
+test('png export renders the diagram only, at twice its size', { skip: !findChrome() && 'no Chrome available' }, async () => {
+  const work = tempDir();
+  fs.copyFileSync(path.join(docs, 'diagrams/architecture.html'), path.join(work, 'architecture.html'));
+  const [image] = await exportPng([path.join(work, 'architecture.html')]);
+  const png = fs.readFileSync(image.png);
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  const width = png.readUInt32BE(16);
+  const svgWidth = Number(/<svg viewBox="0 0 (\d+)/.exec(read(path.join(work, 'architecture.html')))[1]);
+  assert.ok(Math.abs(width - svgWidth * 2) <= 4, `width ${width} vs viewBox ${svgWidth}`);
 });

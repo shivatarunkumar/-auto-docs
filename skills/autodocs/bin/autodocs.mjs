@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDiagram, htmlToDrawio } from '../drawio/export-drawio.mjs';
 import { markdownToConfluence, storageToHtml } from '../docs/confluence.mjs';
-import { checkRunbook } from '../docs/runbook-check.mjs';
+import { exportPng } from '../docs/png-export.mjs';
+import { applyReadmeBlock, checkReadme, checkRunbook, README_START } from '../docs/runbook-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const engine = path.join(__dirname, 'engine.mjs');
@@ -19,12 +20,18 @@ const USAGE = `autodocs — architecture diagrams, draw.io files, runbooks and C
 Documentation commands:
   autodocs drawio <diagram.html> [--out <file.drawio>] [--title <name>]
       Convert a rendered diagram into an editable draw.io file.
-  autodocs runbook check <runbook.md> [--repo-root <dir>] [--json]
+  autodocs png <diagram.html>... [--scale 2]
+      Export rendered diagrams as PNG images (light theme, diagram only).
+  autodocs runbook check <runbook.md> [--repo-root <dir>] [--text-only] [--json]
       Check a runbook against the autodocs runbook contract.
+  autodocs readme apply <README.md> <block.md> [--title <project>]
+      Insert or replace the autodocs-managed block in a README.
+  autodocs readme check <README.md> [--repo-root <dir>] [--json]
+      Check the managed README block.
   autodocs confluence <runbook.md> [--out <file.xhtml>] [--no-toc]
       Convert Markdown into Confluence storage format.
-  autodocs bundle <docs-dir> [--repo-root <dir>] [--json]
-      Export every diagram to .drawio, check the runbook, and write a
+  autodocs bundle <docs-dir> [--repo-root <dir>] [--no-png] [--json]
+      Export every diagram to .drawio and .png, check the runbook, and write a
       Confluence import folder at <docs-dir>/confluence/.
 
 Diagram engine commands (finalize, validate, render, guide, doctor, ...):
@@ -90,12 +97,42 @@ function printRunbookReport(file, report, json) {
 
 function runbookCommand(args) {
   const [sub, ...rest] = args;
-  if (sub !== 'check') fail('Usage: autodocs runbook check <runbook.md> [--repo-root <dir>] [--json]');
-  const options = parseOptions(rest, { 'repo-root': 'string', json: 'boolean' });
+  if (sub !== 'check') fail('Usage: autodocs runbook check <runbook.md> [--repo-root <dir>] [--text-only] [--json]');
+  const options = parseOptions(rest, { 'repo-root': 'string', json: 'boolean', 'text-only': 'boolean' });
   const file = options._[0];
-  const report = checkRunbook(readFile(file), { runbookPath: file, repoRoot: options['repo-root'] });
+  const report = checkRunbook(readFile(file), { runbookPath: file, repoRoot: options['repo-root'], requireDiagram: !options['text-only'] });
   printRunbookReport(file, report, options.json);
   process.exit(report.ok ? 0 : 1);
+}
+
+async function pngCommand(args) {
+  const options = parseOptions(args, { scale: 'string' });
+  if (!options._.length) fail('Usage: autodocs png <diagram.html>... [--scale 2]');
+  options._.forEach(readFile);
+  const results = await exportPng(options._, { scale: Number(options.scale ?? 2) });
+  process.stdout.write(`${JSON.stringify({ ok: true, images: results.map((item) => ({ ...item, png: path.resolve(item.png) })) })}\n`);
+}
+
+function readmeCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub === 'apply') {
+    const options = parseOptions(rest, { title: 'string' });
+    const [readme, blockFile] = options._;
+    if (!readme || !blockFile) fail('Usage: autodocs readme apply <README.md> <block.md> [--title <project>]');
+    const existing = fs.existsSync(readme) ? fs.readFileSync(readme, 'utf8') : null;
+    const updated = applyReadmeBlock(existing, readFile(blockFile), { title: options.title });
+    writeFile(readme, updated);
+    process.stdout.write(`${JSON.stringify({ ok: true, readme: path.resolve(readme), created: existing == null, replacedBlock: Boolean(existing?.includes(README_START)) })}\n`);
+    return;
+  }
+  if (sub === 'check') {
+    const options = parseOptions(rest, { 'repo-root': 'string', json: 'boolean' });
+    const file = options._[0];
+    const report = checkReadme(readFile(file), { readmePath: file, repoRoot: options['repo-root'] });
+    printRunbookReport(file, report, options.json);
+    process.exit(report.ok ? 0 : 1);
+  }
+  fail('Usage: autodocs readme apply <README.md> <block.md> | autodocs readme check <README.md> [--repo-root <dir>]');
 }
 
 function confluenceCommand(args) {
@@ -117,7 +154,7 @@ tokens or extra tools are needed; the API route at the end is optional.
 | \`page.html\` | Open in a browser and copy-paste into Confluence (easiest) |
 | \`page.md\` | Paste as Markdown |
 | \`page.xhtml\` | Confluence storage format, for a source editor app or the REST API |
-| \`attachments/\` | Files to attach to the page: draw.io diagrams and interactive HTML diagrams |
+| \`attachments/\` | Files to attach to the page: draw.io diagrams, PNG images and interactive HTML diagrams |
 
 ## 1. Create the page
 
@@ -150,7 +187,7 @@ choose *Insert → draw.io Diagram* (or type \`/draw.io\`), then *Import* (or
 *File → Import from → Device* inside the draw.io editor) and select the file
 from \`attachments/\`. Delete the panel afterwards. The diagram stays editable in
 Confluence. This needs the *draw.io Diagrams for Confluence* app on your site;
-without it, attach a PNG exported from the interactive \`.html\` diagram instead.
+without it, insert the matching \`.png\` from \`attachments/\` as an image instead.
 
 Readers can download the attached \`.html\` diagrams and open them in a browser
 for focus, path tracing and image export.
@@ -179,13 +216,14 @@ ${attachments.map((file) => `- \`attachments/${file}\``).join('\n') || '- (none)
 
 const DIAGRAMS_README = `# Diagrams
 
-Each diagram has three files with the same name:
+Each diagram has these files with the same name:
 
 | File | What it is |
 |---|---|
-| \`<name>.json\` | The diagram's source. Edit this (or ask the agent to) and re-run \`/autodocs\` to regenerate the other two. Keep it in git. |
+| \`<name>.json\` | The diagram's source. Edit this (or ask the agent to) and re-run \`/autodocs\` to regenerate the others. Keep it in git. |
 | \`<name>.html\` | Interactive diagram. Open in a browser: click components, trace paths, export PNG/SVG. |
 | \`<name>.drawio\` | Editable draw.io file for Confluence or diagrams.net. |
+| \`<name>.png\` | Static image for READMEs and pages that cannot embed the others. |
 
 Check results from generation are kept in \`../.checks/\`, which git ignores.
 `;
@@ -222,8 +260,8 @@ function tidyChecks(docsDir) {
   return moved;
 }
 
-function bundleCommand(args) {
-  const options = parseOptions(args, { 'repo-root': 'string', json: 'boolean' });
+async function bundleCommand(args) {
+  const options = parseOptions(args, { 'repo-root': 'string', json: 'boolean', 'no-png': 'boolean' });
   const docsDir = path.resolve(options._[0] ?? 'docs/autodocs');
   if (!fs.existsSync(docsDir)) fail(`Docs folder not found: ${docsDir}`);
   const result = { docsDir, diagrams: [], runbook: null, confluence: null, warnings: [] };
@@ -249,6 +287,14 @@ function bundleCommand(args) {
     const out = file.replace(/\.html$/i, '.drawio');
     writeFile(out, htmlToDrawio(html, { title: titleFor(file) }));
     result.diagrams.push({ html: path.relative(docsDir, file), drawio: path.relative(docsDir, out) });
+  }
+  if (!options['no-png'] && result.diagrams.length) {
+    try {
+      const images = await exportPng(result.diagrams.map((diagram) => path.join(docsDir, diagram.html)));
+      images.forEach((image, i) => { result.diagrams[i].png = path.relative(docsDir, image.png); });
+    } catch (error) {
+      result.warnings.push(`PNG export skipped: ${error.message}`);
+    }
   }
   for (const dir of new Set(result.diagrams.map((diagram) => path.dirname(path.join(docsDir, diagram.html))))) {
     if (dir !== docsDir) writeFile(path.join(dir, 'README.md'), DIAGRAMS_README);
@@ -283,7 +329,11 @@ function bundleCommand(args) {
       fs.copyFileSync(source, path.join(attachmentsDir, name));
     };
     page.attachments.forEach(attach);
-    result.diagrams.forEach((diagram) => { attach(diagram.drawio); attach(diagram.html); });
+    result.diagrams.forEach((diagram) => {
+      attach(diagram.drawio);
+      attach(diagram.html);
+      if (diagram.png) attach(diagram.png);
+    });
     writeFile(path.join(confluenceDir, 'page.xhtml'), page.xhtml);
     writeFile(path.join(confluenceDir, 'page.html'), storageToHtml(page.xhtml, { title: page.title || 'Runbook' }));
     writeFile(path.join(confluenceDir, 'page.md'), markdown.replace(/^---\n[\s\S]*?\n---\n/, ''));
@@ -296,7 +346,7 @@ function bundleCommand(args) {
   if (options.json) process.stdout.write(`${JSON.stringify({ ok, ...result }, null, 2)}\n`);
   else {
     process.stdout.write(`${ok ? 'PASS' : 'FAIL'} bundle ${docsDir}\n`);
-    for (const diagram of result.diagrams) process.stdout.write(`  drawio  ${diagram.drawio}\n`);
+    for (const diagram of result.diagrams) process.stdout.write(`  diagram ${diagram.drawio}${diagram.png ? `, ${diagram.png}` : ''}\n`);
     if (result.runbook) printRunbookReport('runbook.md', result.runbook, false);
     if (result.confluence) process.stdout.write(`  confluence ${result.confluence.dir}/ (page.html, page.md, page.xhtml, IMPORT.md, ${result.confluence.attachments.length} attachments)\n`);
     if (result.checksMoved) process.stdout.write(`  tidied  ${result.checksMoved} check result(s) into .checks/\n`);
@@ -315,8 +365,10 @@ switch (command) {
   case undefined: case 'help': case '-h': case '--help': process.stdout.write(USAGE); break;
   case 'help-engine': delegate(['help']); break;
   case 'drawio': drawioCommand(rest); break;
+  case 'png': await pngCommand(rest); break;
   case 'runbook': runbookCommand(rest); break;
+  case 'readme': readmeCommand(rest); break;
   case 'confluence': confluenceCommand(rest); break;
-  case 'bundle': bundleCommand(rest); break;
+  case 'bundle': await bundleCommand(rest); break;
   default: delegate([command, ...rest]);
 }

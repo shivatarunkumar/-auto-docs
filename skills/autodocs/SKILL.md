@@ -1,16 +1,19 @@
 ---
 name: autodocs
-description: "Generate a complete, source-backed documentation set for a codebase: interactive HTML architecture and flow diagrams, editable draw.io (.drawio) files, and an implementation-level runbook (purpose, setup, configuration, usage, how it works, operations, troubleshooting), packaged for Confluence import. Use when the user runs /autodocs, asks to document a repository or service, wants architecture/workflow/sequence/data-flow/state diagrams or draw.io files, a runbook, or docs for Confluence. Also converts Mermaid into diagrams."
+description: "Generate the complete, source-backed documentation set for a codebase: interactive HTML architecture and flow diagrams with editable draw.io (.drawio) and PNG copies, an implementation-level runbook, and a Confluence import package. Use when the user runs /autodocs, asks to document a repository or service end to end, or wants architecture/workflow/sequence/data-flow/state diagrams or draw.io files. For only a runbook, only Confluence content or only the README, the autodocs-runbook, autodocs-confluence and autodocs-readme skills are narrower. Also converts Mermaid into diagrams."
 argument-hint: "[repo path] [architecture | flows | runbook | all] [notes for the docs]"
 license: Apache-2.0
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # autodocs
 
-Produce documentation a team can publish: diagrams as interactive HTML and
-editable `.drawio`, a runbook in Markdown, and a Confluence import folder.
+Produce documentation a team can publish: diagrams as interactive HTML,
+editable `.drawio` and `.png`, a runbook in Markdown, and a Confluence import
+folder. Narrower commands share this engine: `/autodocs-runbook` (runbook only),
+`/autodocs-confluence` (Confluence package only) and `/autodocs-readme` (managed
+README block). Suggest them when the user wants just one of those.
 
 Every command below runs `node <skill>/bin/autodocs.mjs`, where `<skill>` is
 the absolute path of the folder containing this file. Run commands from the
@@ -38,16 +41,17 @@ in one monorepo and no hint which one). Otherwise proceed.
 <docs>/                       default docs/autodocs/
   runbook.md                  the runbook (Markdown, source of truth)
   diagrams/
-    README.md                 what the three files per diagram are (from `bundle`)
+    README.md                 what the files per diagram are (from `bundle`)
     architecture.json         candidate (source of the diagram; keep it)
     architecture.html         interactive diagram
     architecture.drawio       editable draw.io file
-    <flow-slug>.json|.html|.drawio
+    architecture.png          static image (from `bundle` or `png`)
+    <flow-slug>.json|.html|.drawio|.png
   confluence/                 written by `bundle`
     page.html                 runbook to open in a browser and copy-paste
     page.md                   runbook as Markdown
     page.xhtml                runbook in Confluence storage format
-    attachments/              .drawio and .html files to attach
+    attachments/              .drawio, .png and .html files to attach
     IMPORT.md                 step-by-step import instructions
   .checks/                    engine check results; git-ignored
   .gitignore                  ignores .checks/
@@ -110,7 +114,7 @@ them.
    node <skill>/bin/autodocs.mjs bundle <docs> --repo-root <repo>
    ```
 
-   `bundle` re-exports every diagram to `.drawio`, checks the runbook (sections,
+   `bundle` re-exports every diagram to `.drawio` and `.png`, checks the runbook (sections,
    placeholders, broken links, citations against the repository) and writes
    `<docs>/confluence/`. A non-zero exit is never success.
 
