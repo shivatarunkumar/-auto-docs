@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Installs the autodocs skills (/autodocs, /autodocs-runbook, /autodocs-confluence,
-// /autodocs-readme) for GitHub Copilot or Claude Code.
+// /autodocs-confluence-upload, /autodocs-readme) for GitHub Copilot or Claude Code.
 //
 //   node install.mjs --agent copilot             ~/.copilot/skills/
 //   node install.mjs --agent copilot --project . <project>/.github/skills/

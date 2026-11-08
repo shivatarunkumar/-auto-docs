@@ -8,6 +8,7 @@ Claude Code. Pick the command for what you need:
 | `/autodocs` | Everything below: architecture and flow diagrams, runbook, Confluence package |
 | `/autodocs-runbook` | `runbook.md` with the architecture diagram (`text-only` for no diagram) |
 | `/autodocs-confluence` | A Confluence package: `page.html` to copy-paste, draw.io and PNG diagrams, `IMPORT.md` |
+| `/autodocs-confluence-upload` | Publishes straight to Confluence Cloud: a new or existing page, diagrams as images, `.drawio` files attached |
 | `/autodocs-readme` | Your `README.md` updated with overview, architecture image, quick start, configuration and usage |
 
 What the outputs contain:
@@ -69,23 +70,57 @@ claude plugin marketplace update autodocs
 claude plugin update autodocs@autodocs
 ```
 
-### GitHub Copilot (VS Code)
+To install without the plugin system, clone this repo and run
+`node autodocs/install.mjs --agent claude`, which copies the skills into
+`~/.claude/skills/`.
+
+### GitHub Copilot in VS Code
+
+1. Clone this repo and run the installer from the folder that contains the
+   clone. Choose one of the two install commands:
+
+   ```bash
+   git clone https://github.com/shivatarunkumar/-auto-docs.git autodocs
+
+   # Just for you, in every project (~/.copilot/skills/):
+   node autodocs/install.mjs --agent copilot
+
+   # Or for one repo, shared with your team (<repo>/.github/skills/):
+   node autodocs/install.mjs --agent copilot --project ~/my-app
+   ```
+
+   For a repo install, commit the new `.github/skills/autodocs*` folders so
+   your teammates get the commands too.
+
+2. Reload VS Code: open the Command Palette and run *Developer: Reload Window*.
+
+3. Open your project, open Copilot Chat in **Agent** mode, type `/` and pick a
+   command, for example `/autodocs-readme`. Allow the agent to run terminal
+   commands when it asks; it needs them to generate and check the docs.
+
+**To update:** run `git pull` in the clone, then re-run the same install command
+with `--force`. **To remove:** re-run it with `--uninstall`.
+
+The installer always copies all five skills, because the other four use the
+engine in `autodocs`. Keep the folder names as they are: VS Code doesn't load a
+skill whose folder name differs from its `name`.
+
+If the commands don't appear, check that `~/.copilot/skills/autodocs/SKILL.md`
+exists (or `.github/skills/autodocs/SKILL.md` for a repo install), then type
+`/skills` in the chat to see what Copilot has loaded.
+
+**Alternative, as a VS Code agent plugin:** make sure the `chat.plugins.enabled`
+setting is on, run *Chat: Install Plugin from Source* from the Command Palette,
+and enter `https://github.com/shivatarunkumar/-auto-docs`. Plugin commands may be
+prefixed, for example `/autodocs:autodocs-readme`.
+
+### GitHub Copilot CLI
 
 ```bash
-git clone https://github.com/shivatarunkumar/-auto-docs.git autodocs
-node autodocs/install.mjs --agent copilot                     # for you: ~/.copilot/skills/
-node autodocs/install.mjs --agent copilot --project ~/my-app  # for a repo: ~/my-app/.github/skills/
+copilot plugin install shivatarunkumar/-auto-docs   # install
+copilot plugin update autodocs                      # update
+copilot plugin uninstall autodocs                   # remove
 ```
-
-The installer copies all four skills; they share the engine in
-`skills/autodocs`. Commit the project install (`.github/skills/autodocs*`) to
-share it with your team. In Copilot Chat, switch to **Agent** mode and type
-`/autodocs`. If the commands don't appear, enable agent skills in VS Code
-settings (`chat.useAgentSkills`) and reload the window.
-
-To update, `git pull` and re-run the installer with `--force`. To remove,
-re-run it with `--uninstall`. `--agent claude` installs the same skills into
-`~/.claude/skills/` without the plugin system.
 
 ## Use
 
@@ -98,6 +133,7 @@ Run commands from the root of the repository you want to document:
 /autodocs-runbook for on-call engineers
 /autodocs-runbook text-only
 /autodocs-confluence                       reuses docs/autodocs/ if it is current
+/autodocs-confluence-upload                publishes to Confluence Cloud
 /autodocs-readme emphasise local development
 ```
 
@@ -105,9 +141,11 @@ Output goes to `docs/autodocs/` unless you name another folder:
 
 ```text
 docs/autodocs/
-  runbook.md
+  runbook.md            full technical guide
+  page.md               short plain-language page for Confluence
   diagrams/<name>.json | .html | .drawio | .png
   confluence/page.html  page.md  page.xhtml  attachments/  IMPORT.md
+  .confluence.json      the page uploads go to; no secrets, safe to commit
   .checks/              generation check results (git-ignored)
 ```
 
@@ -116,7 +154,25 @@ The `.json` next to each diagram is its source: keep it, and re-running
 
 ## Publishing to Confluence
 
-Follow `docs/autodocs/confluence/IMPORT.md`. In short, no API needed:
+**Direct upload (Confluence Cloud).** Run `/autodocs-confluence-upload`.
+
+- **Token:** the first time, you run one login command in your terminal. It
+  asks for an [API token](https://id.atlassian.com/manage-profile/security/api-tokens)
+  with hidden input, checks it, and saves it in macOS Keychain, or in a private
+  file in `~/.config/autodocs/` on other systems. Later runs reuse it without
+  asking. `CONFLUENCE_BASE_URL`, `CONFLUENCE_USER` and `CONFLUENCE_API_TOKEN`
+  take precedence, for CI.
+- **Page:** it asks whether to create a new page or load into an existing one,
+  then remembers the choice and updates that page from then on.
+- **Your content is kept:** autodocs only changes its own marked block on the
+  page. `--mode replace` overwrites the whole page, and only when you ask.
+- **Easy to read:** the page is a short plain-language summary anyone can
+  follow. The full technical runbook is attached to it.
+- **Diagrams:** each one appears as an image, and its `.drawio`, interactive
+  `.html` and `.png` are attached and listed in a Files table on the page. To make one a live draw.io diagram, use
+  *Insert → draw.io Diagram → Import* with the attached file.
+
+**Manual import, no API.** Follow `docs/autodocs/confluence/IMPORT.md`. In short:
 
 1. Open `page.html` in a browser, copy everything, and paste it into a new
    Confluence page (or paste `page.md` as Markdown).
@@ -137,6 +193,8 @@ node $A runbook check docs/autodocs/runbook.md --repo-root .     # contract + ci
 node $A readme apply README.md block.md                          # insert/replace the managed block
 node $A readme check README.md --repo-root .
 node $A bundle docs/autodocs --repo-root .                       # drawio + png + checks + confluence/
+node $A confluence status                                        # are credentials saved?
+node $A confluence publish docs/autodocs --new --space ENG --dry-run   # preview an upload
 node $A help-engine                                              # diagram engine commands
 ```
 
@@ -145,11 +203,11 @@ node $A help-engine                                              # diagram engin
 | Path | Purpose |
 |---|---|
 | `skills/autodocs/SKILL.md` | `/autodocs`: full documentation run |
-| `skills/autodocs-runbook/`, `autodocs-confluence/`, `autodocs-readme/` | The focused commands; they use the engine in `skills/autodocs` |
+| `skills/autodocs-runbook/`, `autodocs-confluence/`, `autodocs-confluence-upload/`, `autodocs-readme/` | The focused commands; they use the engine in `skills/autodocs` |
 | `skills/autodocs/references/` | Runbook and README authoring rules, diagram authoring rules |
 | `skills/autodocs/bin/autodocs.mjs` | CLI: `drawio`, `png`, `runbook`, `readme`, `confluence`, `bundle`, plus the engine |
 | `skills/autodocs/drawio/` | Rendered diagram → draw.io converter |
-| `skills/autodocs/docs/` | Runbook/README checks, PNG export, Markdown → Confluence |
+| `skills/autodocs/docs/` | Runbook/README checks, PNG export, Markdown → Confluence, Confluence upload |
 | `skills/autodocs/renderers/`, `schemas/`, `bin/engine.mjs` | Diagram engine: rendering and validation |
 | `.claude-plugin/` | Claude Code plugin and marketplace manifests |
 | `install.mjs` | Installer for GitHub Copilot and Claude Code |

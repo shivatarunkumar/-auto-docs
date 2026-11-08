@@ -108,7 +108,10 @@ them.
    `.html`). Explain each flow diagram in the `## How it works` subsection that
    covers it.
 
-5. **Bundle for Confluence** and fix every error it reports, then run it again:
+5. **Write the plain-language Confluence page** at `<docs>/page.md`, following
+   [Confluence page writing](references/confluence-page.md).
+
+6. **Bundle for Confluence** and fix every error it reports, then run it again:
 
    ```bash
    node <skill>/bin/autodocs.mjs bundle <docs> --repo-root <repo>

@@ -29,6 +29,16 @@ another folder.
   (steps 1–4: research, diagrams, runbook). The Confluence page is the runbook,
   so it is required.
 
+## Write the page people will read
+
+The runbook is for engineers. Confluence readers get a short, plain-language
+`<docs>/page.md`. Write it, or update it if the code has changed, by following
+`<engine>/references/confluence-page.md`. The full runbook is attached to the
+page, so nothing is lost.
+
+If the user asks for the full technical runbook as the page, skip this step and
+delete any existing `<docs>/page.md`.
+
 ## Bundle
 
 ```bash

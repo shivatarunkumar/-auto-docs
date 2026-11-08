@@ -142,12 +142,12 @@ test('storage format renders as a copy-pasteable HTML page', () => {
   assert.match(html, /<a href="attachments\/architecture.drawio">architecture.drawio<\/a>/);
 });
 
-test('installer copies all four skills into a project for Copilot and Claude, and removes them', () => {
+test('installer copies all skills into a project for Copilot and Claude, and removes them', () => {
   const project = tempDir();
   const install = (...args) => spawnSync(process.execPath, [path.join(root, 'install.mjs'), ...args, '--project', project], { encoding: 'utf8' });
   assert.equal(install('--agent', 'copilot').status, 0);
   assert.equal(install('--agent', 'claude').status, 0);
-  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-readme', 'autodocs-runbook']) {
+  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-confluence-upload', 'autodocs-readme', 'autodocs-runbook']) {
     assert.ok(fs.existsSync(path.join(project, '.github/skills', skill, 'SKILL.md')), skill);
     assert.ok(fs.existsSync(path.join(project, '.claude/skills', skill, 'SKILL.md')), skill);
   }
@@ -158,7 +158,7 @@ test('installer copies all four skills into a project for Copilot and Claude, an
 });
 
 test('every SKILL.md has front matter Copilot and Claude can load', () => {
-  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-readme', 'autodocs-runbook']) {
+  for (const skill of ['autodocs', 'autodocs-confluence', 'autodocs-confluence-upload', 'autodocs-readme', 'autodocs-runbook']) {
     const text = read(path.join(root, 'skills', skill, 'SKILL.md'));
     const front = /^---\n([\s\S]*?)\n---\n/.exec(text)[1];
     assert.match(front, new RegExp(`^name: ${skill}$`, 'm'));

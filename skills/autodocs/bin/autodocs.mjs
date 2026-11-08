@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDiagram, htmlToDrawio } from '../drawio/export-drawio.mjs';
 import { markdownToConfluence, storageToHtml } from '../docs/confluence.mjs';
+import { deleteCredentials, normalizeBaseUrl, publish, PublishError, resolveCredentials, saveCredentials, verifyCredentials } from '../docs/confluence-publish.mjs';
 import { exportPng } from '../docs/png-export.mjs';
 import { applyReadmeBlock, checkReadme, checkRunbook, README_START } from '../docs/runbook-check.mjs';
 
@@ -33,6 +34,15 @@ Documentation commands:
   autodocs bundle <docs-dir> [--repo-root <dir>] [--no-png] [--json]
       Export every diagram to .drawio and .png, check the runbook, and write a
       Confluence import folder at <docs-dir>/confluence/.
+  autodocs confluence login --base-url <site> --email <email> [--token-stdin]
+      Verify and save Confluence Cloud credentials (asks for the token hidden).
+  autodocs confluence status [--verify] [--json]
+      Report whether credentials are saved. Never prints the token.
+  autodocs confluence logout
+      Delete the saved credentials.
+  autodocs confluence publish <docs-dir> (--dry-run | --yes) [--new --space <KEY> [--parent <page>]]
+      [--page <url|id>] [--title <name>] [--mode managed|replace] [--repo-root <dir>] [--json]
+      Upload a bundle to Confluence. Reuses the page in <docs-dir>/.confluence.json.
 
 Diagram engine commands (finalize, validate, render, guide, doctor, ...):
   autodocs finalize <type> <candidate.json> <output.html> [--repo-root <dir>] --quality showcase --json
@@ -135,6 +145,122 @@ function readmeCommand(args) {
   fail('Usage: autodocs readme apply <README.md> <block.md> | autodocs readme check <README.md> [--repo-root <dir>]');
 }
 
+function promptHidden(label) {
+  if (!process.stdin.isTTY) fail('The token prompt needs a terminal. Run this command in a terminal, or pipe the token in with --token-stdin.');
+  return new Promise((resolve) => {
+    process.stderr.write(label);
+    let value = '';
+    const finish = () => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.off('data', onData);
+      process.stderr.write('\n');
+      resolve(value);
+    };
+    const onData = (chunk) => {
+      for (const char of chunk.toString('utf8')) {
+        if (char === '\r' || char === '\n' || char === '\u0004') { finish(); return; }
+        if (char === '\u0003') { process.stdin.setRawMode(false); process.stderr.write('\n'); process.exit(130); }
+        if (char === '\u007f' || char === '\b') value = value.slice(0, -1);
+        else value += char;
+      }
+    };
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', onData);
+  });
+}
+
+async function readStdin() {
+  let text = '';
+  for await (const chunk of process.stdin) text += chunk;
+  return text.trim();
+}
+
+async function confluenceLogin(args) {
+  const options = parseOptions(args, { 'base-url': 'string', email: 'string', 'token-stdin': 'boolean' });
+  const saved = resolveCredentials();
+  const rawUrl = options['base-url'] ?? saved.baseUrl;
+  const email = options.email ?? saved.email;
+  if (!rawUrl || !email) fail('Usage: autodocs confluence login --base-url https://<site>.atlassian.net --email <email> [--token-stdin]');
+  const baseUrl = normalizeBaseUrl(rawUrl);
+  const token = (options['token-stdin'] ? await readStdin() : await promptHidden('Confluence API token (hidden): ')).trim();
+  if (!token) fail('No token entered.');
+  const user = await verifyCredentials({ baseUrl, email, token });
+  const store = saveCredentials({ baseUrl, email, token });
+  process.stdout.write(`${JSON.stringify({ ok: true, baseUrl, email, user, store })}\n`);
+}
+
+async function confluenceStatus(args) {
+  const options = parseOptions(args, { verify: 'boolean', json: 'boolean' });
+  const { baseUrl, email, token, tokenSource, missing } = resolveCredentials();
+  const report = { configured: missing.length === 0, baseUrl, email, tokenSource, missing };
+  if (options.verify && report.configured) report.user = await verifyCredentials({ baseUrl, email, token });
+  if (options.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  else process.stdout.write(report.configured ? `Configured: ${email} on ${baseUrl} (token from ${tokenSource})\n` : `Not configured. Missing: ${missing.join(', ')}\n`);
+  process.exit(report.configured ? 0 : 3);
+}
+
+function printPublishResult(result) {
+  const { plan } = result;
+  const lines = [
+    result.applied ? `Published: ${result.url} (version ${result.version})` : `Dry run, nothing changed. Confluence would get:`,
+    `  page        ${plan.title}${plan.url ? ` (${plan.url})` : ` (new, in space ${plan.space})`}`,
+    `  effect      ${plan.effect}`,
+    `  diagrams    ${plan.diagramsEmbedded.length} shown as images`,
+    `  attachments ${plan.attachments.length}: ${plan.attachments.join(', ') || 'none'}`,
+    ...plan.warnings.map((warning) => `  warning     ${warning}`),
+  ];
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+async function confluencePublish(args) {
+  const options = parseOptions(args, {
+    new: 'boolean', space: 'string', parent: 'string', page: 'string', title: 'string', mode: 'string',
+    'repo-root': 'string', 'dry-run': 'boolean', yes: 'boolean', json: 'boolean',
+  });
+  const docsDir = path.resolve(options._[0] ?? 'docs/autodocs');
+  const mode = options.mode ?? 'managed';
+  if (!['managed', 'replace'].includes(mode)) fail('--mode must be managed or replace.');
+  if (Boolean(options['dry-run']) === Boolean(options.yes)) fail('Pass exactly one of --dry-run (preview) or --yes (publish).');
+  if (options.new && options.page) fail('Use either --new or --page, not both.');
+  if (options.new && !options.space) fail('--new needs --space <KEY>.');
+  if (!options.new && (options.space || options.parent)) fail('--space and --parent only apply with --new.');
+  const credentials = resolveCredentials();
+  if (credentials.missing.length) throw new PublishError('credentials-missing', `Missing Confluence ${credentials.missing.join(', ')}. Run: autodocs confluence login --base-url <site> --email <email>`, 3);
+  const result = await publish({
+    docsDir,
+    repoRoot: options['repo-root'] ?? '.',
+    mode,
+    apply: Boolean(options.yes),
+    credentials,
+    target: { page: options.page, isNew: options.new, space: options.space, parent: options.parent, title: options.title },
+  });
+  if (options.json) process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
+  else printPublishResult(result);
+}
+
+const CONFLUENCE_ACCOUNT_COMMANDS = { login: confluenceLogin, status: confluenceStatus, publish: confluencePublish };
+
+async function confluenceDispatch(args) {
+  const [sub, ...rest] = args;
+  if (sub === 'logout') {
+    deleteCredentials();
+    process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    return;
+  }
+  const handler = CONFLUENCE_ACCOUNT_COMMANDS[sub];
+  if (!handler) { confluenceCommand(args); return; }
+  try {
+    await handler(rest);
+  } catch (error) {
+    if (!(error instanceof PublishError)) throw error;
+    if (args.includes('--json')) process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message }, null, 2)}\n`);
+    else process.stderr.write(`autodocs: ${error.message}\n`);
+    process.exit(error.exitCode);
+  }
+}
+
 function confluenceCommand(args) {
   const options = parseOptions(args, { out: 'string', 'no-toc': 'boolean' });
   const input = options._[0];
@@ -194,19 +320,13 @@ for focus, path tracing and image export.
 
 ## Optional: automate with the REST API
 
-For scripted or CI publishing, create the page from \`page.xhtml\` and upload
-the attachments:
+To skip these steps on Confluence Cloud, run \`/autodocs-confluence-upload\`, or
+publish from a script or CI with \`CONFLUENCE_BASE_URL\`, \`CONFLUENCE_USER\` and
+\`CONFLUENCE_API_TOKEN\` set:
 
 \`\`\`bash
-curl -u "$CONFLUENCE_USER:$CONFLUENCE_API_TOKEN" -H 'Content-Type: application/json' \\
-  -X POST "$CONFLUENCE_BASE_URL/wiki/rest/api/content" \\
-  -d "$(jq -n --arg t '${title.replace(/'/g, '')}' --arg s "$CONFLUENCE_SPACE" --rawfile b page.xhtml \\
-    '{type:"page",title:$t,space:{key:$s},body:{storage:{value:$b,representation:"storage"}}}')"
-
-for f in attachments/*; do
-  curl -u "$CONFLUENCE_USER:$CONFLUENCE_API_TOKEN" -H 'X-Atlassian-Token: no-check' \\
-    -X POST "$CONFLUENCE_BASE_URL/wiki/rest/api/content/$PAGE_ID/child/attachment" -F "file=@$f"
-done
+autodocs confluence publish docs/autodocs --new --space <KEY> --dry-run
+autodocs confluence publish docs/autodocs --new --space <KEY> --yes
 \`\`\`
 
 ## Files
@@ -315,11 +435,18 @@ async function bundleCommand(args) {
     const attachmentsDir = path.join(confluenceDir, 'attachments');
     fs.rmSync(confluenceDir, { recursive: true, force: true });
     fs.mkdirSync(attachmentsDir, { recursive: true });
-    const page = markdownToConfluence(markdown);
+    // A plain-language page.md, when present, is what readers see; the runbook is attached.
+    const friendlyPath = path.join(docsDir, 'page.md');
+    const hasFriendlyPage = fs.existsSync(friendlyPath);
+    const pageMarkdown = hasFriendlyPage ? fs.readFileSync(friendlyPath, 'utf8') : markdown;
+    const page = markdownToConfluence(pageMarkdown, { toc: !hasFriendlyPage });
     const flatNames = new Map();
     const attach = (relative) => {
       const source = path.resolve(docsDir, relative);
-      if (!fs.existsSync(source)) return;
+      if (!fs.existsSync(source)) {
+        result.warnings.push(`The page links to ${relative}, which does not exist.`);
+        return;
+      }
       const name = path.basename(source);
       if (flatNames.has(name) && flatNames.get(name) !== source) {
         result.warnings.push(`Two attachments are named ${name}; Confluence keeps one name per page.`);
@@ -329,6 +456,7 @@ async function bundleCommand(args) {
       fs.copyFileSync(source, path.join(attachmentsDir, name));
     };
     page.attachments.forEach(attach);
+    if (hasFriendlyPage) attach('runbook.md');
     result.diagrams.forEach((diagram) => {
       attach(diagram.drawio);
       attach(diagram.html);
@@ -336,7 +464,7 @@ async function bundleCommand(args) {
     });
     writeFile(path.join(confluenceDir, 'page.xhtml'), page.xhtml);
     writeFile(path.join(confluenceDir, 'page.html'), storageToHtml(page.xhtml, { title: page.title || 'Runbook' }));
-    writeFile(path.join(confluenceDir, 'page.md'), markdown.replace(/^---\n[\s\S]*?\n---\n/, ''));
+    writeFile(path.join(confluenceDir, 'page.md'), pageMarkdown.replace(/^---\n[\s\S]*?\n---\n/, ''));
     const attachments = [...flatNames.keys()].sort();
     writeFile(path.join(confluenceDir, 'IMPORT.md'), IMPORT_GUIDE(page.title || 'Runbook', attachments));
     result.confluence = { dir: path.relative(docsDir, confluenceDir), title: page.title, attachments };
@@ -368,7 +496,7 @@ switch (command) {
   case 'png': await pngCommand(rest); break;
   case 'runbook': runbookCommand(rest); break;
   case 'readme': readmeCommand(rest); break;
-  case 'confluence': confluenceCommand(rest); break;
+  case 'confluence': await confluenceDispatch(rest); break;
   case 'bundle': await bundleCommand(rest); break;
   default: delegate([command, ...rest]);
 }

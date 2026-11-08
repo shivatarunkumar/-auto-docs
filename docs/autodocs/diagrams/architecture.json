@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "autodocs Architecture",
+    "output": "docs/autodocs/diagrams/architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/shivatarunkumar/-auto-docs.git",
+      "revision": "0830f40eb52f34d30c63fd94d387b21ad8209a41"
+    }
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Engineer",
+      "sublabel": "types a command",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "Coding agent",
+      "sublabel": "Claude Code, Copilot",
+      "pos": [
+        260,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "install.mjs",
+          "line": 23,
+          "end_line": 26
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "autodocs CLI",
+      "sublabel": "bin/autodocs.mjs",
+      "pos": [
+        500,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/bin/autodocs.mjs",
+          "line": 363,
+          "end_line": 374
+        }
+      ]
+    },
+    {
+      "id": "output",
+      "type": "database",
+      "label": "docs/autodocs/",
+      "sublabel": "diagrams, runbook",
+      "pos": [
+        810,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/bin/autodocs.mjs",
+          "line": 313,
+          "end_line": 343
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "type": "database",
+      "label": "Skill files",
+      "sublabel": "SKILL.md + references",
+      "pos": [
+        260,
+        220
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs-confluence/SKILL.md",
+          "line": 1,
+          "end_line": 8
+        },
+        {
+          "path": "skills/autodocs/SKILL.md",
+          "line": 65,
+          "end_line": 119
+        }
+      ]
+    },
+    {
+      "id": "mods",
+      "type": "backend",
+      "label": "Docs modules",
+      "sublabel": "drawio/ and docs/",
+      "pos": [
+        490,
+        220
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/drawio/export-drawio.mjs",
+          "line": 49,
+          "end_line": 53
+        },
+        {
+          "path": "skills/autodocs/docs/confluence.mjs",
+          "line": 36,
+          "end_line": 52
+        },
+        {
+          "path": "skills/autodocs/docs/runbook-check.mjs",
+          "line": 140,
+          "end_line": 182
+        }
+      ]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "Diagram engine",
+      "sublabel": "finalize, render",
+      "pos": [
+        810,
+        220
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/bin/finalize.mjs",
+          "line": 22
+        },
+        {
+          "path": "skills/autodocs/bin/autodocs.mjs",
+          "line": 358,
+          "end_line": 361
+        }
+      ]
+    },
+    {
+      "id": "repo",
+      "type": "database",
+      "label": "Target repository",
+      "sublabel": "cited source files",
+      "pos": [
+        260,
+        380
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/docs/runbook-check.mjs",
+          "line": 97,
+          "end_line": 120
+        }
+      ]
+    },
+    {
+      "id": "chrome",
+      "type": "external",
+      "label": "Chromium browser",
+      "sublabel": "headless",
+      "pos": [
+        490,
+        380
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "skills/autodocs/docs/png-export.mjs",
+          "line": 45,
+          "end_line": 80
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "ask",
+      "from": "user",
+      "to": "agent",
+      "label": "/autodocs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "run",
+      "from": "agent",
+      "to": "cli",
+      "label": "shell",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read-skill",
+      "from": "agent",
+      "to": "skills",
+      "label": "reads steps",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "write-output",
+      "from": "cli",
+      "to": "output",
+      "label": "writes bundle",
+      "variant": "emphasis"
+    },
+    {
+      "id": "call-mods",
+      "from": "cli",
+      "to": "mods",
+      "label": "export, check",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "delegate",
+      "from": "cli",
+      "to": "engine",
+      "label": "delegates"
+    },
+    {
+      "id": "engine-out",
+      "from": "engine",
+      "to": "output",
+      "label": "HTML",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "citations",
+      "from": "mods",
+      "to": "repo",
+      "label": "verifies citations",
+      "variant": "dashed"
+    },
+    {
+      "id": "png",
+      "from": "mods",
+      "to": "chrome",
+      "label": "PNG",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "browser-check",
+      "from": "engine",
+      "to": "chrome",
+      "label": "browser-check"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Entry points",
+      "items": [
+        "Skills tell the agent what to do",
+        "The agent does all work through the CLI"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Outputs",
+      "items": [
+        "Diagrams as HTML, draw.io and PNG",
+        "Runbook plus a Confluence folder"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Boundaries",
+      "items": [
+        "At this revision nothing is sent over the network",
+        "Chromium is the only external program"
+      ]
+    }
+  ]
+}

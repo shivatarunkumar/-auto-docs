@@ -272,6 +272,57 @@ function drawioPanel(label, src, context) {
   return panelMacro('info', `Diagram: ${label || name}`, body);
 }
 
+// For direct publishing, where the attachments are uploaded with the page:
+// shows each diagram as its PNG, with the .drawio and .html attached beside it.
+export function embedDiagrams(xhtml, hasAttachment) {
+  const embedded = [];
+  const missing = [];
+  const unescape = (name) => name.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const attachmentLink = (name, text) => `<ac:link><ri:attachment ri:filename="${name}" /><ac:plain-text-link-body>${cdata(text)}</ac:plain-text-link-body></ac:link>`;
+  const figure = (name, label) => {
+    const stem = name.replace(/\.drawio$/i, '');
+    if (!hasAttachment(unescape(`${stem}.png`))) { missing.push(unescape(name)); return null; }
+    embedded.push(unescape(name));
+    return `<p><ac:image ac:alt="${label}" ac:width="760"><ri:attachment ri:filename="${stem}.png" /></ac:image></p>\n<p><em>${label}</em></p>`;
+  };
+  const seen = new Set();
+  const panels = /<ac:structured-macro ac:name="info" ac:schema-version="1"><ac:parameter ac:name="title">Diagram: ([^<]*)<\/ac:parameter><ac:rich-text-body>(?:(?!<\/ac:rich-text-body>)[\s\S])*?ri:filename="([^"]*\.drawio)"[\s\S]*?<\/ac:rich-text-body><\/ac:structured-macro>/g;
+  const withPanels = xhtml.replace(panels, (macro, label, name) => {
+    seen.add(name);
+    return figure(name, label) ?? macro;
+  });
+  // A diagram linked in running text gets its picture above that paragraph.
+  const paragraphs = /<p>(?:(?!<\/p>)[\s\S])*?<ri:attachment ri:filename="([^"]*\.drawio)" \/>(?:(?!<\/p>)[\s\S])*?<\/p>/g;
+  const result = withPanels.replace(paragraphs, (paragraph, name) => {
+    if (seen.has(name)) return paragraph;
+    seen.add(name);
+    const shown = figure(name, name.replace(/\.drawio$/i, ''));
+    return shown ? `${shown}\n${paragraph}` : paragraph;
+  });
+  return { xhtml: result, embedded, missing };
+}
+
+// A visible list of the page's files, so readers need not hunt for attachments.
+export function filesSection(attachments) {
+  const names = new Set(attachments);
+  const fileLink = (name, text) => `<ac:link><ri:attachment ri:filename="${escapeXml(name)}" /><ac:plain-text-link-body>${cdata(text)}</ac:plain-text-link-body></ac:link>`;
+  const cell = (name, text) => `<td>${names.has(name) ? fileLink(name, text) : ''}</td>`;
+  const stems = attachments.filter((name) => /\.drawio$/i.test(name)).map((name) => name.replace(/\.drawio$/i, ''));
+  const diagramFiles = new Set(stems.flatMap((stem) => [`${stem}.drawio`, `${stem}.html`, `${stem}.png`]));
+  const others = attachments.filter((name) => !diagramFiles.has(name));
+  const parts = [];
+  if (stems.length) {
+    const title = (stem) => escapeXml(stem.replace(/[-_]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase()));
+    parts.push('<table data-layout="default"><tbody>', '<tr><th>Diagram</th><th>Edit in draw.io</th><th>Open in a browser</th><th>Picture</th></tr>',
+      ...stems.map((stem) => `<tr><td>${title(stem)}</td>${cell(`${stem}.drawio`, 'Download')}${cell(`${stem}.html`, 'Download')}${cell(`${stem}.png`, 'Download')}</tr>`),
+      '</tbody></table>');
+  }
+  if (others.includes('runbook.md')) parts.push(`<p>Engineers can find every technical detail in the ${fileLink('runbook.md', 'full runbook')}.</p>`);
+  const rest = others.filter((name) => name !== 'runbook.md');
+  if (rest.length) parts.push(`<p>Other files: ${rest.map((name) => fileLink(name, name)).join(', ')}.</p>`);
+  return parts.length ? ['<h2>Files</h2>', ...parts].join('\n') : '';
+}
+
 function panelMacro(name, title, body) {
   return `<ac:structured-macro ac:name="${name}" ac:schema-version="1"><ac:parameter ac:name="title">${escapeXml(title)}</ac:parameter>`
     + `<ac:rich-text-body>${body}</ac:rich-text-body></ac:structured-macro>`;

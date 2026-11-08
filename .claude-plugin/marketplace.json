@@ -10,7 +10,7 @@
     {
       "name": "autodocs",
       "source": "./",
-      "description": "Generate source-backed docs for a codebase: /autodocs (full set), /autodocs-runbook, /autodocs-confluence (draw.io + copy-paste page) and /autodocs-readme (managed README block with PNG diagram).",
+      "description": "Generate source-backed docs for a codebase: /autodocs (full set), /autodocs-runbook, /autodocs-confluence (draw.io + copy-paste page), /autodocs-confluence-upload (direct publish to Confluence Cloud) and /autodocs-readme (managed README block with PNG diagram).",
       "version": "0.3.0"
     }
   ]

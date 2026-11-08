@@ -51,7 +51,8 @@ export async function exportPng(htmlPaths, { scale = 2, width = 1600 } = {}) {
     const sessionId = await browser.sessionPromise;
     for (const htmlPath of htmlPaths) {
       const out = htmlPath.replace(/\.html?$/i, '') + '.png';
-      await browser.cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
+      const viewportHeight = 1000;
+      await browser.cdp.send('Emulation.setDeviceMetricsOverride', { width, height: viewportHeight, deviceScaleFactor: 1, mobile: false }, sessionId);
       const url = pathToFileURL(path.resolve(htmlPath));
       url.searchParams.set('theme', 'light');
       const loaded = browser.cdp.waitFor('Page.loadEventFired', sessionId);
@@ -62,12 +63,16 @@ export async function exportPng(htmlPaths, { scale = 2, width = 1600 } = {}) {
       await evaluate(browser, sessionId, SETTLE_SCRIPT, true);
       const box = await evaluate(browser, sessionId, MEASURE_SCRIPT);
       if (!box || !box.width || !box.height) throw new Error(`${htmlPath} has no diagram to export.`);
+      // A diagram sized to fit the window would redraw larger if the capture
+      // grew the window, and the measured box would crop it. Only a diagram
+      // taller than the window needs capturing beyond it.
+      const fitsWindow = box.y + box.height <= viewportHeight;
       // Render at `scale` times the diagram's own coordinate size, whatever
       // size the reader layout gave it on screen.
       const captureScale = Math.min(4, scale * (box.viewBoxWidth / box.width));
       const capture = await browser.cdp.send('Page.captureScreenshot', {
         format: 'png',
-        captureBeyondViewport: true,
+        captureBeyondViewport: !fitsWindow,
         clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: captureScale },
       }, sessionId, 30000);
       fs.writeFileSync(out, Buffer.from(capture.data, 'base64'));
