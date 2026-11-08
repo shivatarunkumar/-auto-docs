@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local only: generated docs for this repo and the installed Copilot copy
+/docs/autodocs/
+/.github/skills/
+/.claude/
